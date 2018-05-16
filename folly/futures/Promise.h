@@ -16,9 +16,12 @@
 
 #pragma once
 
+#include <functional>
+
 #include <folly/Portability.h>
 #include <folly/Try.h>
-#include <functional>
+#include <folly/futures/FutureException.h>
+#include <folly/lang/Exception.h>
 
 namespace folly {
 
@@ -74,7 +77,7 @@ class Promise {
       p.setException(std::current_exception());
     }
     */
-  FOLLY_DEPRECATED("use setException(exception_wrapper)")
+  [[deprecated("use setException(exception_wrapper)")]]
   void setException(std::exception_ptr const&);
 
   /** Fulfill the Promise with an exception type E, which can be passed to
@@ -114,10 +117,15 @@ class Promise {
   template <class F>
   void setWith(F&& func);
 
+  /// true if this has a shared state;
+  /// false if this has been consumed/moved-out.
+  bool valid() const noexcept {
+    return core_ != nullptr;
+  }
+
   bool isFulfilled() const noexcept;
 
  private:
-  typedef typename Future<T>::corePtr corePtr;
   template <class>
   friend class futures::detail::FutureBase;
   template <class>
@@ -130,13 +138,35 @@ class Promise {
   // Whether the Future has been retrieved (a one-time operation).
   bool retrieved_;
 
+  using CoreType = typename Future<T>::CoreType;
+  using corePtr = typename Future<T>::corePtr;
+
+  // Throws NoState if there is no shared state object; else returns it by ref.
+  //
+  // Implementation methods should usually use this instead of `this->core_`.
+  // The latter should be used only when you need the possibly-null pointer.
+  CoreType& getCore() {
+    return getCoreImpl(core_);
+  }
+  CoreType const& getCore() const {
+    return getCoreImpl(core_);
+  }
+
+  template <typename CoreT>
+  static CoreT& getCoreImpl(CoreT* core) {
+    if (!core) {
+      throw_exception<NoState>();
+    }
+    return *core;
+  }
+
   // shared core state object
+  // usually you should use `getCore()` instead of directly accessing `core_`.
   corePtr core_;
 
   explicit Promise(futures::detail::EmptyConstruct) noexcept;
 
-  void throwIfFulfilled();
-  void throwIfRetrieved();
+  void throwIfFulfilled() const;
   void detach();
 };
 

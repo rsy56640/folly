@@ -46,6 +46,7 @@ bool RequestContext::doSetContextData(
   if (conflict) {
     if (it->second) {
       if (it->second->hasCallback()) {
+        it->second->onUnset();
         wlock->callbackData_.erase(it->second.get());
       }
       it->second.reset(nullptr);
@@ -55,6 +56,7 @@ bool RequestContext::doSetContextData(
 
   if (data && data->hasCallback()) {
     wlock->callbackData_.insert(data.get());
+    data->onSet();
   }
   wlock->requestData_[val] = std::move(data);
 
@@ -102,6 +104,19 @@ void RequestContext::onUnset() {
   }
 }
 
+std::shared_ptr<RequestContext> RequestContext::createChild() {
+  auto child = std::make_shared<RequestContext>();
+  auto rlock = state_.rlock();
+  for (const auto& entry : rlock->requestData_) {
+    auto& key = entry.first;
+    auto childData = entry.second->createChild();
+    if (childData) {
+      child->setContextData(key, std::move(childData));
+    }
+  }
+  return child;
+}
+
 void RequestContext::clearContextData(const std::string& val) {
   std::unique_ptr<RequestData> requestData;
   // Delete the RequestData after giving up the wlock just in case one of the
@@ -115,6 +130,7 @@ void RequestContext::clearContextData(const std::string& val) {
 
     auto wlock = ulock.moveFromUpgradeToWrite();
     if (it->second && it->second->hasCallback()) {
+      it->second->onUnset();
       wlock->callbackData_.erase(it->second.get());
     }
 

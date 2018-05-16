@@ -592,8 +592,8 @@ bool EventBase::runImmediatelyOrRunInEventBaseThreadAndWait(Func fn) {
 }
 
 bool EventBase::runLoopCallbacks() {
+  bumpHandlingTime();
   if (!loopCallbacks_.empty()) {
-    bumpHandlingTime();
     // Swap the loopCallbacks_ list with a temporary list on our stack.
     // This way we will only run callbacks scheduled at the time
     // runLoopCallbacks() was invoked.
@@ -701,6 +701,9 @@ bool EventBase::scheduleTimeout(AsyncTimeout* obj,
   tv.tv_usec = long((timeout.count() % 1000LL) * 1000LL);
 
   struct event* ev = obj->getEvent();
+
+  DCHECK(ev->ev_base);
+
   if (event_add(ev, &tv) < 0) {
     LOG(ERROR) << "EventBase: failed to schedule timeout: " << strerror(errno);
     return false;
@@ -732,6 +735,13 @@ const std::string& EventBase::getName() {
   return name_;
 }
 
+void EventBase::scheduleAt(Func&& fn, TimePoint const& timeout) {
+  auto duration = timeout - now();
+  timer().scheduleTimeoutFn(
+      std::move(fn),
+      std::chrono::duration_cast<std::chrono::milliseconds>(duration));
+}
+
 const char* EventBase::getLibeventVersion() { return event_get_version(); }
 const char* EventBase::getLibeventMethod() { return event_get_method(); }
 
@@ -741,6 +751,10 @@ VirtualEventBase& EventBase::getVirtualEventBase() {
   });
 
   return *virtualEventBase_;
+}
+
+EventBase* EventBase::getEventBase() {
+  return this;
 }
 
 constexpr std::chrono::milliseconds EventBase::SmoothLoopTime::buffer_interval_;

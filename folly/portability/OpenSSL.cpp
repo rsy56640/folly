@@ -64,6 +64,10 @@ int X509_up_ref(X509* x) {
   return CRYPTO_add(&x->references, 1, CRYPTO_LOCK_X509);
 }
 
+int X509_STORE_up_ref(X509_STORE* v) {
+  return CRYPTO_add(&v->references, 1, CRYPTO_LOCK_X509_STORE);
+}
+
 int EVP_PKEY_up_ref(EVP_PKEY* evp) {
   return CRYPTO_add(&evp->references, 1, CRYPTO_LOCK_EVP_PKEY);
 }
@@ -298,6 +302,10 @@ void DSA_get0_key(
   }
 }
 
+STACK_OF(X509_OBJECT) * X509_STORE_get0_objects(X509_STORE* store) {
+  return store->objs;
+}
+
 X509* X509_STORE_CTX_get0_cert(X509_STORE_CTX* ctx) {
   return ctx->cert;
 }
@@ -458,6 +466,37 @@ const ASN1_INTEGER* X509_REVOKED_get0_serialNumber(const X509_REVOKED* r) {
 
 const ASN1_TIME* X509_REVOKED_get0_revocationDate(const X509_REVOKED* r) {
   return r->revocationDate;
+}
+
+uint32_t X509_get_extension_flags(X509* x) {
+  return x->ex_flags;
+}
+
+uint32_t X509_get_key_usage(X509* x) {
+  return x->ex_kusage;
+}
+
+uint32_t X509_get_extended_key_usage(X509* x) {
+  return x->ex_xkusage;
+}
+
+int X509_OBJECT_get_type(const X509_OBJECT* obj) {
+  return obj->type;
+}
+
+X509* X509_OBJECT_get0_X509(const X509_OBJECT* obj) {
+  if (obj == nullptr || obj->type != X509_LU_X509) {
+    return nullptr;
+  }
+  return obj->data.x509;
+}
+
+const ASN1_TIME* X509_CRL_get0_lastUpdate(const X509_CRL* crl) {
+  return X509_CRL_get_lastUpdate(crl);
+}
+
+const ASN1_TIME* X509_CRL_get0_nextUpdate(const X509_CRL* crl) {
+  return X509_CRL_get_nextUpdate(crl);
 }
 
 #endif // !FOLLY_OPENSSL_IS_110

@@ -29,6 +29,8 @@
 #include <folly/portability/GFlags.h>
 #include <folly/portability/GTest.h>
 
+#include <condition_variable>
+
 #include <thread>
 
 DEFINE_int32(num_threads, 5, "Number of threads");
@@ -639,4 +641,123 @@ TEST_F(HazptrTest, FreeFunctionCleanup) {
   for (auto& t : threads) {
     t.join();
   }
+  { // Cleanup after using array
+    constructed.store(0);
+    destroyed.store(0);
+    { hazptr_array<2> h; }
+    {
+      hazptr_array<2> h;
+      auto p0 = new Foo(0, nullptr);
+      auto p1 = new Foo(0, nullptr);
+      h[0].reset(p0);
+      h[1].reset(p1);
+      p0->retire();
+      p1->retire();
+    }
+    CHECK_EQ(constructed.load(), 2);
+    hazptr_cleanup();
+    CHECK_EQ(destroyed.load(), 2);
+  }
+  { // Cleanup after using local
+    constructed.store(0);
+    destroyed.store(0);
+    { hazptr_local<2> h; }
+    {
+      hazptr_local<2> h;
+      auto p0 = new Foo(0, nullptr);
+      auto p1 = new Foo(0, nullptr);
+      h[0].reset(p0);
+      h[1].reset(p1);
+      p0->retire();
+      p1->retire();
+    }
+    CHECK_EQ(constructed.load(), 2);
+    hazptr_cleanup();
+    CHECK_EQ(destroyed.load(), 2);
+  }
+}
+
+TEST_F(HazptrTest, ForkTest) {
+  struct Obj : hazptr_obj_base<Obj> {
+    int a;
+  };
+  std::mutex m;
+  std::condition_variable cv;
+  std::condition_variable cv2;
+  bool ready = false;
+  bool ready2 = false;
+  auto mkthread = [&]() {
+    hazptr_holder h;
+    auto p = new Obj;
+    std::atomic<Obj*> ap{p};
+    h.get_protected<Obj>(p);
+    p->retire();
+    {
+      std::unique_lock<std::mutex> lk(m);
+      ready = true;
+      cv.notify_one();
+      cv2.wait(lk, [&] { return ready2; });
+    }
+  };
+  std::thread t(mkthread);
+  hazptr_holder h;
+  auto p = new Obj;
+  std::atomic<Obj*> ap{p};
+  h.get_protected<Obj>(p);
+  p->retire();
+  {
+    std::unique_lock<std::mutex> lk(m);
+    cv.wait(lk, [&] { return ready; });
+  }
+  auto pid = fork();
+  CHECK_GE(pid, 0);
+  if (pid) {
+    {
+      std::lock_guard<std::mutex> g(m);
+      ready2 = true;
+      cv2.notify_one();
+    }
+    t.join();
+    int status;
+    wait(&status);
+    CHECK_EQ(status, 0);
+  } else {
+    // child
+    std::thread tchild(mkthread);
+    {
+      std::lock_guard<std::mutex> g(m);
+      ready2 = true;
+      cv2.notify_one();
+    }
+    tchild.join();
+    _exit(0); // Do not print gtest results
+  }
+}
+
+TEST_F(HazptrTest, CopyAndMoveTest) {
+  struct Obj : hazptr_obj_base<Obj> {
+    int a;
+  };
+
+  auto p1 = new Obj();
+  auto p2 = new Obj(*p1);
+  p1->retire();
+  p2->retire();
+
+  p1 = new Obj();
+  p2 = new Obj(std::move(*p1));
+  p1->retire();
+  p2->retire();
+
+  p1 = new Obj();
+  p2 = new Obj();
+  *p2 = *p1;
+  p1->retire();
+  p2->retire();
+
+  p1 = new Obj();
+  p2 = new Obj();
+  *p2 = std::move(*p1);
+  p1->retire();
+  p2->retire();
 }

@@ -39,14 +39,14 @@ struct AddressData {
   uint8_t version;
 
   AddressData(
-      const std::string& address,
-      const ByteVector& bytes,
-      uint8_t version)
-      : address(address), bytes(bytes), version(version) {}
-  AddressData(const std::string& address, uint8_t version)
-      : address(address), bytes(), version(version) {}
-  explicit AddressData(const std::string& address)
-      : address(address), bytes(), version(0) {}
+      const std::string& address_,
+      const ByteVector& bytes_,
+      uint8_t version_)
+      : address(address_), bytes(bytes_), version(version_) {}
+  AddressData(const std::string& address_, uint8_t version_)
+      : address(address_), bytes(), version(version_) {}
+  explicit AddressData(const std::string& address_)
+      : address(address_), bytes(), version(0) {}
   AddressData() : address(""), bytes(), version(0) {}
 
   static in_addr parseAddress4(const std::string& src) {
@@ -75,8 +75,8 @@ struct AddressFlags {
   static const uint8_t IS_MULTICAST = 1 << 5;
   static const uint8_t IS_LINK_LOCAL_BROADCAST = 1 << 6;
 
-  AddressFlags(const std::string& addr, uint8_t version, uint8_t flags)
-      : address(addr), flags(flags), version(version) {}
+  AddressFlags(const std::string& addr, uint8_t version_, uint8_t flags_)
+      : address(addr), flags(flags_), version(version_) {}
 
   bool isLoopback() const {
     return (flags & IS_LOCAL);
@@ -102,26 +102,26 @@ struct MaskData {
   std::string address;
   uint8_t mask;
   std::string subnet;
-  MaskData(const std::string& addr, uint8_t mask, const std::string& subnet)
-      : address(addr), mask(mask), subnet(subnet) {}
+  MaskData(const std::string& addr, uint8_t mask_, const std::string& subnet_)
+      : address(addr), mask(mask_), subnet(subnet_) {}
 };
 
 struct MaskBoundaryData : MaskData {
   bool inSubnet;
   MaskBoundaryData(
       const std::string& addr,
-      uint8_t mask,
-      const std::string& subnet,
-      bool inSubnet)
-      : MaskData(addr, mask, subnet), inSubnet(inSubnet) {}
+      uint8_t mask_,
+      const std::string& subnet_,
+      bool inSubnet_)
+      : MaskData(addr, mask_, subnet_), inSubnet(inSubnet_) {}
 };
 
 struct SerializeData {
   std::string address;
   ByteVector bytes;
 
-  SerializeData(const std::string& addr, const ByteVector& bytes)
-      : address(addr), bytes(bytes) {}
+  SerializeData(const std::string& addr, const ByteVector& bytes_)
+      : address(addr), bytes(bytes_) {}
 };
 
 struct IPAddressTest : TestWithParam<AddressData> {
@@ -835,7 +835,7 @@ TEST(IPAddress, getIPv6For6To4) {
     auto ipv6 = ipv4.getIPv6For6To4();
     EXPECT_EQ(ipv6.type(), IPAddressV6::Type::T6TO4);
     auto ipv4New = ipv6.getIPv4For6To4();
-    EXPECT_TRUE(ipv4Str.compare(ipv4New.str()) == 0);
+    EXPECT_EQ(ipv4Str, ipv4New.str());
   }
 }
 
@@ -908,13 +908,13 @@ TEST(IPAddress, ToLong) {
 
     auto ip2 = IPAddress::fromLongHBO(tc.second);
     EXPECT_TRUE(ip2.isV4());
-    EXPECT_TRUE(tc.first.compare(ip2.str()) == 0);
+    EXPECT_EQ(tc.first, ip2.str());
     EXPECT_EQ(tc.second, ip2.asV4().toLongHBO());
 
     auto nla = htonl(tc.second);
     auto ip3 = IPAddress::fromLong(nla);
     EXPECT_TRUE(ip3.isV4());
-    EXPECT_TRUE(tc.first.compare(ip3.str()) == 0);
+    EXPECT_EQ(tc.first, ip3.str());
     EXPECT_EQ(nla, ip3.asV4().toLong());
   }
 }

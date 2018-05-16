@@ -93,7 +93,7 @@ TEST(Enumerate, Temporary) {
   }
 
   EXPECT_EQ(i, v.size());
-};
+}
 
 TEST(Enumerate, BasicConstArg) {
   const std::vector<std::string> v = {"abc", "a", "ab"};
@@ -151,7 +151,7 @@ class CStringRange {
  public:
   struct Sentinel {};
 
-  explicit CStringRange(const char* cstr) : cstr(cstr) {}
+  explicit CStringRange(const char* cstr_) : cstr(cstr_) {}
 
   const char* begin() const {
     return cstr;

@@ -21,17 +21,21 @@
 #include <memory>
 #include <type_traits>
 #include <vector>
+#if FOLLY_HAS_COROUTINES
+#include <experimental/coroutine>
+#endif
 
 #include <folly/Optional.h>
 #include <folly/Portability.h>
 #include <folly/ScopeGuard.h>
 #include <folly/Try.h>
+#include <folly/Unit.h>
 #include <folly/Utility.h>
 #include <folly/executors/DrivableExecutor.h>
 #include <folly/executors/TimedDrivableExecutor.h>
-#include <folly/futures/FutureException.h>
 #include <folly/futures/Promise.h>
 #include <folly/futures/detail/Types.h>
+#include <folly/lang/Exception.h>
 
 // boring predeclarations and details
 #include <folly/futures/Future-pre.h>
@@ -47,6 +51,9 @@ class Future;
 
 template <class T>
 class SemiFuture;
+
+template <class T>
+class FutureSplitter;
 
 namespace futures {
 namespace detail {
@@ -67,11 +74,12 @@ class FutureBase {
   /* implicit */ FutureBase(
       typename std::enable_if<std::is_same<Unit, T2>::value>::type*);
 
-  template <
-      class... Args,
-      typename std::enable_if<std::is_constructible<T, Args&&...>::value, int>::
-          type = 0>
-  explicit FutureBase(in_place_t, Args&&... args);
+  template <class... Args>
+  explicit FutureBase(
+      typename std::enable_if<
+          std::is_constructible<T, Args&&...>::value,
+          in_place_t>::type,
+      Args&&... args);
 
   FutureBase(FutureBase<T> const&) = delete;
   FutureBase(SemiFuture<T>&&) noexcept;
@@ -82,6 +90,12 @@ class FutureBase {
   FutureBase(SemiFuture<T> const&) = delete;
 
   ~FutureBase();
+
+  /// true if this has a shared state;
+  /// false if this has been consumed/moved-out.
+  bool valid() const noexcept {
+    return core_ != nullptr;
+  }
 
   /// Returns a reference to the result, with a reference category and const-
   /// qualification equivalent to the reference category and const-qualification
@@ -108,10 +122,10 @@ class FutureBase {
   bool isReady() const;
 
   /// sugar for getTry().hasValue()
-  bool hasValue();
+  bool hasValue() const;
 
   /// sugar for getTry().hasException()
-  bool hasException();
+  bool hasException() const;
 
   /// If the promise has been fulfilled, return an Optional with the Try<T>.
   /// Otherwise return an empty Optional.
@@ -125,10 +139,6 @@ class FutureBase {
   /// friends. But it's not for public consumption.
   template <class F>
   void setCallback_(F&& func);
-
-  bool isActive() {
-    return core_->isActive();
-  }
 
   template <class E>
   void raise(E&& exception) {
@@ -157,9 +167,46 @@ class FutureBase {
   template <class>
   friend class Future;
 
-  using corePtr = futures::detail::Core<T>*;
+  using CoreType = futures::detail::Core<T>;
+  using corePtr = CoreType*;
+
+  // Throws NoState if there is no shared state object; else returns it by ref.
+  //
+  // Implementation methods should usually use this instead of `this->core_`.
+  // The latter should be used only when you need the possibly-null pointer.
+  CoreType& getCore() {
+    return getCoreImpl(*this);
+  }
+  CoreType const& getCore() const {
+    return getCoreImpl(*this);
+  }
+
+  template <typename Self>
+  static decltype(auto) getCoreImpl(Self& self) {
+    if (!self.core_) {
+      throw_exception<NoState>();
+    }
+    return *self.core_;
+  }
+
+  Try<T>& getCoreTryChecked() {
+    return getCoreTryChecked(*this);
+  }
+  Try<T> const& getCoreTryChecked() const {
+    return getCoreTryChecked(*this);
+  }
+
+  template <typename Self>
+  static decltype(auto) getCoreTryChecked(Self& self) {
+    auto& core = self.getCore();
+    if (!core.hasResult()) {
+      throw_exception<FutureNotReady>();
+    }
+    return core.getTry();
+  }
 
   // shared core state object
+  // usually you should use `getCore()` instead of directly accessing `core_`.
   corePtr core_;
 
   explicit FutureBase(corePtr obj) : core_(obj) {}
@@ -170,15 +217,14 @@ class FutureBase {
 
   void throwIfInvalid() const;
 
-  template <class FutureType>
-  void assign(FutureType&) noexcept;
+  void assign(FutureBase<T>&& other) noexcept;
 
-  Executor* getExecutor() {
-    return core_->getExecutor();
+  Executor* getExecutor() const {
+    return getCore().getExecutor();
   }
 
   void setExecutor(Executor* x, int8_t priority = Executor::MID_PRI) {
-    core_->setExecutor(x, priority);
+    getCore().setExecutor(x, priority);
   }
 
   // Variant: returns a value
@@ -193,6 +239,8 @@ class FutureBase {
   typename std::enable_if<R::ReturnsFuture::value, typename R::Return>::type
   thenImplementation(F&& func, futures::detail::argResult<isTry, F, Args...>);
 };
+template <class T>
+void convertFuture(SemiFuture<T>&& sf, Future<T>& f);
 } // namespace detail
 } // namespace futures
 
@@ -242,12 +290,12 @@ class SemiFuture : private futures::detail::FutureBase<T> {
   using Base::cancel;
   using Base::hasException;
   using Base::hasValue;
-  using Base::isActive;
   using Base::isReady;
   using Base::poll;
   using Base::raise;
   using Base::result;
   using Base::setCallback_;
+  using Base::valid;
   using Base::value;
 
   SemiFuture& operator=(SemiFuture const&) = delete;
@@ -263,8 +311,8 @@ class SemiFuture : private futures::detail::FutureBase<T> {
   /// exception).
   T get(Duration dur) &&;
 
-  /// Block until the future is fulfilled, or until timed out. Returns the
-  /// Try of the value (moved out).
+  /// Block until the future is fulfilled. Returns the Try of the value (moved
+  /// out).
   Try<T> getTry() &&;
 
   /// Block until the future is fulfilled, or until timed out. Returns the
@@ -284,32 +332,16 @@ class SemiFuture : private futures::detail::FutureBase<T> {
   /// Overload of wait(Duration) for rvalue Futures
   SemiFuture<T>&& wait(Duration) &&;
 
-  /// Returns an inactive Future which will call back on the other side of
-  /// executor (when it is activated).
+  /// Returns a Future which will call back on the other side of executor.
   ///
-  /// NB remember that Futures activate when they destruct. This is good,
-  /// it means that this will work:
-  ///
-  ///   f.via(e).then(a).then(b);
-  ///
-  /// a and b will execute in the same context (the far side of e), because
-  /// the Future (temporary variable) created by via(e) does not call back
-  /// until it destructs, which is after then(a) and then(b) have been wired
-  /// up.
-  ///
-  /// But this is still racy:
-  ///
-  ///   f = f.via(e).then(a);
-  ///   f.then(b);
-  // The ref-qualifier allows for `this` to be moved out so we
-  // don't get access-after-free situations in chaining.
-  // https://akrzemi1.wordpress.com/2014/06/02/ref-qualifiers/
-  inline Future<T> via(
-      Executor* executor,
-      int8_t priority = Executor::MID_PRI) &&;
+  /// The ref-qualifier allows for `this` to be moved out so we
+  /// don't get access-after-free situations in chaining.
+  /// https://akrzemi1.wordpress.com/2014/06/02/ref-qualifiers/
+  Future<T> via(Executor* executor, int8_t priority = Executor::MID_PRI) &&;
 
   /**
    * Defer work to run on the consumer of the future.
+   * Function must take a Try as a parameter.
    * This work will be run eithe ron an executor that the caller sets on the
    * SemiFuture, or inline with the call to .get().
    * NB: This is a custom method because boost-blocking executors is a
@@ -318,8 +350,108 @@ class SemiFuture : private futures::detail::FutureBase<T> {
    * of driveable executor here.
    */
   template <typename F>
-  SemiFuture<typename futures::detail::callableResult<T, F>::Return::value_type>
+  SemiFuture<
+      typename futures::detail::deferCallableResult<T, F>::Return::value_type>
   defer(F&& func) &&;
+
+  /**
+   * Defer for functions taking a T rather than a Try<T>.
+   */
+  template <typename F>
+  SemiFuture<typename futures::detail::deferValueCallableResult<T, F>::Return::
+                 value_type>
+  deferValue(F&& func) &&;
+
+  /// Set an error callback for this SemiFuture. The callback should take a
+  /// single argument of the type that you want to catch, and should return a
+  /// value of the same type as this SemiFuture, or a SemiFuture of that type
+  /// (see overload below). For instance,
+  ///
+  /// makeSemiFuture()
+  ///   .defer([] {
+  ///     throw std::runtime_error("oh no!");
+  ///     return 42;
+  ///   })
+  ///   .deferError([] (std::runtime_error& e) {
+  ///     LOG(INFO) << "std::runtime_error: " << e.what();
+  ///     return -1; // or makeSemiFuture<int>(-1)
+  ///   });
+  template <class F>
+  typename std::enable_if<
+      !futures::detail::callableWith<F, exception_wrapper>::value &&
+          !futures::detail::callableWith<F, exception_wrapper&>::value &&
+          !futures::detail::Extract<F>::ReturnsFuture::value,
+      SemiFuture<T>>::type
+  deferError(F&& func) &&;
+
+  /// Overload of deferError where the error callback returns a Future<T>
+  template <class F>
+  typename std::enable_if<
+      !futures::detail::callableWith<F, exception_wrapper>::value &&
+          !futures::detail::callableWith<F, exception_wrapper&>::value &&
+          futures::detail::Extract<F>::ReturnsFuture::value,
+      SemiFuture<T>>::type
+  deferError(F&& func) &&;
+
+  /// Overload of deferError that takes exception_wrapper and returns T
+  template <class F>
+  typename std::enable_if<
+      futures::detail::callableWith<F, exception_wrapper>::value &&
+          !futures::detail::Extract<F>::ReturnsFuture::value,
+      SemiFuture<T>>::type
+  deferError(F&& func) &&;
+
+  /// Overload of deferError that takes exception_wrapper and returns Future<T>
+  template <class F>
+  typename std::enable_if<
+      futures::detail::callableWith<F, exception_wrapper>::value &&
+          futures::detail::Extract<F>::ReturnsFuture::value,
+      SemiFuture<T>>::type
+  deferError(F&& func) &&;
+
+  /// Return a future that completes inline, as if the future had no executor.
+  /// Intended for porting legacy code without behavioural change, and for rare
+  /// cases where this is really the intended behaviour.
+  /// Future is unsafe in the sense that the executor it completes on is
+  /// non-deterministic in the standard case.
+  /// For new code, or to update code that temporarily uses this, please
+  /// use via and pass a meaningful executor.
+  Future<T> toUnsafeFuture() &&;
+
+#if FOLLY_HAS_COROUTINES
+  class promise_type {
+   public:
+    SemiFuture get_return_object() {
+      return promise_.getSemiFuture();
+    }
+
+    std::experimental::suspend_never initial_suspend() {
+      return {};
+    }
+
+    std::experimental::suspend_never final_suspend() {
+      return {};
+    }
+
+    void return_value(T& value) {
+      promise_.setValue(std::move(value));
+    }
+
+    void unhandled_exception() {
+      promise_.setException(exception_wrapper(std::current_exception()));
+    }
+
+   private:
+    folly::Promise<T> promise_;
+  };
+
+  template <typename Awaitable>
+  static SemiFuture fromAwaitable(Awaitable&& awaitable) {
+    return [](Awaitable awaitable) -> SemiFuture {
+      co_return co_await awaitable;
+    }(std::forward<Awaitable>(awaitable));
+  }
+#endif
 
  private:
   friend class Promise<T>;
@@ -327,6 +459,8 @@ class SemiFuture : private futures::detail::FutureBase<T> {
   friend class futures::detail::FutureBase;
   template <class>
   friend class SemiFuture;
+  template <class>
+  friend class Future;
 
   using typename Base::corePtr;
   using Base::setExecutor;
@@ -381,38 +515,37 @@ class Future : private futures::detail::FutureBase<T> {
   Future(Future<T>&&) noexcept;
 
   // converting move
-  template <
-      class T2,
+  template <class T2>
+  /* implicit */ Future(
+      Future<T2>&&,
       typename std::enable_if<
           !std::is_same<T, typename std::decay<T2>::type>::value &&
               std::is_constructible<T, T2&&>::value &&
               std::is_convertible<T2&&, T>::value,
-          int>::type = 0>
-  /* implicit */ Future(Future<T2>&&);
-  template <
-      class T2,
+          int>::type = 0);
+  template <class T2>
+  explicit Future(
+      Future<T2>&&,
       typename std::enable_if<
           !std::is_same<T, typename std::decay<T2>::type>::value &&
               std::is_constructible<T, T2&&>::value &&
               !std::is_convertible<T2&&, T>::value,
-          int>::type = 0>
-  explicit Future(Future<T2>&&);
-  template <
-      class T2,
-      typename std::enable_if<
-          !std::is_same<T, typename std::decay<T2>::type>::value &&
-              std::is_constructible<T, T2&&>::value,
-          int>::type = 0>
-  Future& operator=(Future<T2>&&);
+          int>::type = 0);
+  template <class T2>
+  typename std::enable_if<
+      !std::is_same<T, typename std::decay<T2>::type>::value &&
+          std::is_constructible<T, T2&&>::value,
+      Future<T>&>::type
+  operator=(Future<T2>&&);
 
   using Base::cancel;
   using Base::hasException;
   using Base::hasValue;
-  using Base::isActive;
   using Base::isReady;
   using Base::poll;
   using Base::raise;
   using Base::setCallback_;
+  using Base::valid;
   using Base::value;
   using Base::result;
 
@@ -449,36 +582,17 @@ class Future : private futures::detail::FutureBase<T> {
       enable_if<isFuture<F>::value, Future<typename isFuture<T>::Inner>>::type
       unwrap();
 
-  /// Returns an inactive Future which will call back on the other side of
-  /// executor (when it is activated).
+  /// Returns a Future which will call back on the other side of executor.
   ///
-  /// NB remember that Futures activate when they destruct. This is good,
-  /// it means that this will work:
-  ///
-  ///   f.via(e).then(a).then(b);
-  ///
-  /// a and b will execute in the same context (the far side of e), because
-  /// the Future (temporary variable) created by via(e) does not call back
-  /// until it destructs, which is after then(a) and then(b) have been wired
-  /// up.
-  ///
-  /// But this is still racy:
-  ///
-  ///   f = f.via(e).then(a);
-  ///   f.then(b);
-  // The ref-qualifier allows for `this` to be moved out so we
-  // don't get access-after-free situations in chaining.
-  // https://akrzemi1.wordpress.com/2014/06/02/ref-qualifiers/
-  inline Future<T> via(
-      Executor* executor,
-      int8_t priority = Executor::MID_PRI) &&;
+  /// The ref-qualifier allows for `this` to be moved out so we
+  /// don't get access-after-free situations in chaining.
+  /// https://akrzemi1.wordpress.com/2014/06/02/ref-qualifiers/
+  Future<T> via(Executor* executor, int8_t priority = Executor::MID_PRI) &&;
 
   /// This variant creates a new future, where the ref-qualifier && version
   /// moves `this` out. This one is less efficient but avoids confusing users
   /// when "return f.via(x);" fails.
-  inline Future<T> via(
-      Executor* executor,
-      int8_t priority = Executor::MID_PRI) &;
+  Future<T> via(Executor* executor, int8_t priority = Executor::MID_PRI) &;
 
   /** When this Future has completed, execute func which is a function that
     takes one of:
@@ -623,28 +737,6 @@ class Future : private futures::detail::FutureBase<T> {
   template <class F>
   Future<T> onTimeout(Duration, F&& func, Timekeeper* = nullptr);
 
-  /// A Future's callback is executed when all three of these conditions have
-  /// become true: it has a value (set by the Promise), it has a callback (set
-  /// by then), and it is active (active by default).
-  ///
-  /// Inactive Futures will activate upon destruction.
-  FOLLY_DEPRECATED("do not use") Future<T>& activate() & {
-    this->core_->activate();
-    return *this;
-  }
-  FOLLY_DEPRECATED("do not use") Future<T>& deactivate() & {
-    this->core_->deactivate();
-    return *this;
-  }
-  FOLLY_DEPRECATED("do not use") Future<T> activate() && {
-    this->core_->activate();
-    return std::move(*this);
-  }
-  FOLLY_DEPRECATED("do not use") Future<T> deactivate() && {
-    this->core_->deactivate();
-    return std::move(*this);
-  }
-
   /// Throw TimedOut if this Future does not complete within the given
   /// duration from now. The optional Timeekeeper is as with futures::sleep().
   Future<T> within(Duration, Timekeeper* = nullptr);
@@ -777,6 +869,8 @@ class Future : private futures::detail::FutureBase<T> {
   friend class Future;
   template <class>
   friend class SemiFuture;
+  template <class>
+  friend class FutureSplitter;
 
   using Base::setExecutor;
   using Base::throwIfInvalid;
@@ -812,8 +906,122 @@ class Future : private futures::detail::FutureBase<T> {
   /// predicate behaves like std::function<bool(void)>
   template <class P, class F>
   friend Future<Unit> whileDo(P&& predicate, F&& thunk);
+
+  template <class FT>
+  friend void futures::detail::convertFuture(
+      SemiFuture<FT>&& sf,
+      Future<FT>& f);
+};
+
+/// A Timekeeper handles the details of keeping time and fulfilling delay
+/// promises. The returned Future<Unit> will either complete after the
+/// elapsed time, or in the event of some kind of exceptional error may hold
+/// an exception. These Futures respond to cancellation. If you use a lot of
+/// Delays and many of them ultimately are unneeded (as would be the case for
+/// Delays that are used to trigger timeouts of async operations), then you
+/// can and should cancel them to reclaim resources.
+///
+/// Users will typically get one of these via Future::sleep(Duration) or
+/// use them implicitly behind the scenes by passing a timeout to some Future
+/// operation.
+///
+/// Although we don't formally alias Delay = Future<Unit>,
+/// that's an appropriate term for it. People will probably also call these
+/// Timeouts, and that's ok I guess, but that term is so overloaded I thought
+/// it made sense to introduce a cleaner term.
+///
+/// Remember that Duration is a std::chrono duration (millisecond resolution
+/// at the time of writing). When writing code that uses specific durations,
+/// prefer using the explicit std::chrono type, e.g. std::chrono::milliseconds
+/// over Duration. This makes the code more legible and means you won't be
+/// unpleasantly surprised if we redefine Duration to microseconds, or
+/// something.
+///
+///    timekeeper.after(std::chrono::duration_cast<Duration>(
+///      someNanoseconds))
+class Timekeeper {
+ public:
+  virtual ~Timekeeper() = default;
+
+  /// Returns a future that will complete after the given duration with the
+  /// elapsed time. Exceptional errors can happen but they must be
+  /// exceptional. Use the steady (monotonic) clock.
+  ///
+  /// You may cancel this Future to reclaim resources.
+  ///
+  /// This future probably completes on the timer thread. You should almost
+  /// certainly follow it with a via() call or the accuracy of other timers
+  /// will suffer.
+  virtual Future<Unit> after(Duration) = 0;
+
+  /// Returns a future that will complete at the requested time.
+  ///
+  /// You may cancel this Future to reclaim resources.
+  ///
+  /// NB This is sugar for `after(when - now)`, so while you are welcome to
+  /// use a std::chrono::system_clock::time_point it will not track changes to
+  /// the system clock but rather execute that many milliseconds in the future
+  /// according to the steady clock.
+  template <class Clock>
+  Future<Unit> at(std::chrono::time_point<Clock> when);
 };
 
 } // namespace folly
+
+#if FOLLY_HAS_COROUTINES
+
+namespace folly {
+namespace detail {
+template <typename T>
+class FutureAwaitable {
+ public:
+  explicit FutureAwaitable(folly::Future<T>&& future)
+      : future_(std::move(future)) {}
+
+  bool await_ready() const {
+    return future_.isReady();
+  }
+
+  T await_resume() {
+    return std::move(future_.value());
+  }
+
+  void await_suspend(std::experimental::coroutine_handle<> h) {
+    future_.setCallback_([h](Try<T>&&) mutable { h(); });
+  }
+
+ private:
+  folly::Future<T> future_;
+};
+
+template <typename T>
+class FutureRefAwaitable {
+ public:
+  explicit FutureRefAwaitable(folly::Future<T>& future) : future_(future) {}
+
+  bool await_ready() const {
+    return future_.isReady();
+  }
+
+  T await_resume() {
+    return std::move(future_.value());
+  }
+
+  void await_suspend(std::experimental::coroutine_handle<> h) {
+    future_.setCallback_([h](Try<T>&&) mutable { h(); });
+  }
+
+ private:
+  folly::Future<T>& future_;
+};
+} // namespace detail
+} // namespace folly
+
+template <typename T>
+folly::detail::FutureAwaitable<T>
+/* implicit */ operator co_await(folly::Future<T>& future) {
+  return folly::detail::FutureRefAwaitable<T>(future);
+}
+#endif
 
 #include <folly/futures/Future-inl.h>

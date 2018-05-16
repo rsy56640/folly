@@ -125,6 +125,7 @@
 #include <folly/Executor.h>
 #include <folly/Memory.h>
 #include <folly/Synchronized.h>
+#include <folly/detail/Singleton.h>
 #include <folly/detail/StaticSingletonManager.h>
 #include <folly/experimental/ReadMostlySharedPtr.h>
 #include <folly/hash/Hash.h>
@@ -179,17 +180,6 @@ namespace folly {
 class SingletonVault;
 
 namespace detail {
-
-struct DefaultTag {};
-
-template <typename T>
-struct DefaultMake {
-  // Required form until C++17, which permits returning objects of types which
-  // are neither copy-constructible nor move-constructible.
-  T* operator()(unsigned char (&buf)[sizeof(T)]) const {
-    return new (buf) T();
-  }
-};
 
 // A TypeDescriptor is the unique handle for a given singleton.  It is
 // a combinaiton of the type and of the optional name, and is used as
@@ -575,14 +565,14 @@ class Singleton {
   // Generally your program life cycle should be fine with calling
   // get() repeatedly rather than saving the reference, and then not
   // call get() during process shutdown.
-  FOLLY_DEPRECATED("Replaced by try_get")
+  [[deprecated("Replaced by try_get")]]
   static T* get() { return getEntry().get(); }
 
   // If, however, you do need to hold a reference to the specific
   // singleton, you can try to do so with a weak_ptr.  Avoid this when
   // possible but the inability to lock the weak pointer can be a
   // signal that the vault has been destroyed.
-  FOLLY_DEPRECATED("Replaced by try_get")
+  [[deprecated("Replaced by try_get")]]
   static std::weak_ptr<T> get_weak() { return getEntry().get_weak(); }
 
   // Preferred alternative to get_weak, it returns shared_ptr that can be

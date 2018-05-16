@@ -25,43 +25,43 @@
 
 namespace folly {
 
+namespace futures {
+namespace detail {
+template <typename T>
+void coreDetachPromiseMaybeWithResult(Core<T>& core) {
+  if (!core.hasResult()) {
+    core.setResult(Try<T>(exception_wrapper(BrokenPromise(typeid(T).name()))));
+  }
+  core.detachPromise();
+}
+} // namespace detail
+} // namespace futures
+
 template <class T>
 Promise<T> Promise<T>::makeEmpty() noexcept {
   return Promise<T>(futures::detail::EmptyConstruct{});
 }
 
 template <class T>
-Promise<T>::Promise()
-    : retrieved_(false), core_(new futures::detail::Core<T>()) {}
+Promise<T>::Promise() : retrieved_(false), core_(CoreType::make()) {}
 
 template <class T>
 Promise<T>::Promise(Promise<T>&& other) noexcept
-    : retrieved_(other.retrieved_), core_(other.core_) {
-  other.core_ = nullptr;
-  other.retrieved_ = false;
-}
+    : retrieved_(exchange(other.retrieved_, false)),
+      core_(exchange(other.core_, nullptr)) {}
 
 template <class T>
 Promise<T>& Promise<T>::operator=(Promise<T>&& other) noexcept {
-  std::swap(core_, other.core_);
-  std::swap(retrieved_, other.retrieved_);
+  detach();
+  retrieved_ = exchange(other.retrieved_, false);
+  core_ = exchange(other.core_, nullptr);
   return *this;
 }
 
 template <class T>
-void Promise<T>::throwIfFulfilled() {
-  if (!core_) {
-    throwNoState();
-  }
-  if (core_->ready()) {
-    throwPromiseAlreadySatisfied();
-  }
-}
-
-template <class T>
-void Promise<T>::throwIfRetrieved() {
-  if (retrieved_) {
-    throwFutureAlreadyRetrieved();
+void Promise<T>::throwIfFulfilled() const {
+  if (getCore().hasResult()) {
+    throw_exception<PromiseAlreadySatisfied>();
   }
 }
 
@@ -80,16 +80,18 @@ void Promise<T>::detach() {
     if (!retrieved_) {
       core_->detachFuture();
     }
-    core_->detachPromise();
+    futures::detail::coreDetachPromiseMaybeWithResult(*core_);
     core_ = nullptr;
   }
 }
 
 template <class T>
 SemiFuture<T> Promise<T>::getSemiFuture() {
-  throwIfRetrieved();
+  if (retrieved_) {
+    throw_exception<FutureAlreadyRetrieved>();
+  }
   retrieved_ = true;
-  return SemiFuture<T>(core_);
+  return SemiFuture<T>(&getCore());
 }
 
 template <class T>
@@ -119,8 +121,8 @@ void Promise<T>::setException(exception_wrapper ew) {
 
 template <class T>
 void Promise<T>::setInterruptHandler(
-  std::function<void(exception_wrapper const&)> fn) {
-  core_->setInterruptHandler(std::move(fn));
+    std::function<void(exception_wrapper const&)> fn) {
+  getCore().setInterruptHandler(std::move(fn));
 }
 
 template <class T>

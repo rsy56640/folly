@@ -21,6 +21,7 @@
 #include <cstdarg>
 #include <cstring>
 #include <iterator>
+#include <sstream>
 #include <stdexcept>
 
 #include <glog/logging.h>
@@ -263,7 +264,7 @@ void stringPrintf(std::string* output, const char* format, ...) {
 void stringVPrintf(std::string* output, const char* format, va_list ap) {
   output->clear();
   stringAppendfImpl(*output, format, ap);
-};
+}
 
 namespace {
 
@@ -282,7 +283,21 @@ const PrettySuffix kPrettyTimeSuffixes[] = {
   { nullptr, 0 },
 };
 
+const PrettySuffix kPrettyTimeHmsSuffixes[] = {
+  { "h ", 60L * 60L },
+  { "m ", 60L },
+  { "s ", 1e0L },
+  { "ms", 1e-3L },
+  { "us", 1e-6L },
+  { "ns", 1e-9L },
+  { "ps", 1e-12L },
+  { "s ", 0 },
+  { nullptr, 0 },
+};
+
 const PrettySuffix kPrettyBytesMetricSuffixes[] = {
+  { "EB", 1e18L },
+  { "PB", 1e15L },
   { "TB", 1e12L },
   { "GB", 1e9L },
   { "MB", 1e6L },
@@ -292,6 +307,8 @@ const PrettySuffix kPrettyBytesMetricSuffixes[] = {
 };
 
 const PrettySuffix kPrettyBytesBinarySuffixes[] = {
+  { "EB", int64_t(1) << 60 },
+  { "PB", int64_t(1) << 50 },
   { "TB", int64_t(1) << 40 },
   { "GB", int64_t(1) << 30 },
   { "MB", int64_t(1) << 20 },
@@ -301,6 +318,8 @@ const PrettySuffix kPrettyBytesBinarySuffixes[] = {
 };
 
 const PrettySuffix kPrettyBytesBinaryIECSuffixes[] = {
+  { "EiB", int64_t(1) << 60 },
+  { "PiB", int64_t(1) << 50 },
   { "TiB", int64_t(1) << 40 },
   { "GiB", int64_t(1) << 30 },
   { "MiB", int64_t(1) << 20 },
@@ -310,6 +329,8 @@ const PrettySuffix kPrettyBytesBinaryIECSuffixes[] = {
 };
 
 const PrettySuffix kPrettyUnitsMetricSuffixes[] = {
+  { "qntl", 1e18L },
+  { "qdrl", 1e15L },
   { "tril", 1e12L },
   { "bil",  1e9L },
   { "M",    1e6L },
@@ -319,6 +340,8 @@ const PrettySuffix kPrettyUnitsMetricSuffixes[] = {
 };
 
 const PrettySuffix kPrettyUnitsBinarySuffixes[] = {
+  { "E", int64_t(1) << 60 },
+  { "P", int64_t(1) << 50 },
   { "T", int64_t(1) << 40 },
   { "G", int64_t(1) << 30 },
   { "M", int64_t(1) << 20 },
@@ -328,6 +351,8 @@ const PrettySuffix kPrettyUnitsBinarySuffixes[] = {
 };
 
 const PrettySuffix kPrettyUnitsBinaryIECSuffixes[] = {
+  { "Ei", int64_t(1) << 60 },
+  { "Pi", int64_t(1) << 50 },
   { "Ti", int64_t(1) << 40 },
   { "Gi", int64_t(1) << 30 },
   { "Mi", int64_t(1) << 20 },
@@ -363,6 +388,7 @@ const PrettySuffix kPrettySISuffixes[] = {
 
 const PrettySuffix* const kPrettySuffixes[PRETTY_NUM_TYPES] = {
   kPrettyTimeSuffixes,
+  kPrettyTimeHmsSuffixes,
   kPrettyBytesMetricSuffixes,
   kPrettyBytesBinarySuffixes,
   kPrettyBytesBinaryIECSuffixes,
@@ -429,8 +455,7 @@ double prettyToDouble(folly::StringPiece *const prettyString,
   }
   if (bestPrefixId == -1) { //No valid suffix rule found
     throw std::invalid_argument(folly::to<std::string>(
-            "Unable to parse suffix \"",
-            prettyString->toString(), "\""));
+        "Unable to parse suffix \"", *prettyString, "\""));
   }
   prettyString->advance(size_t(longestPrefixLen));
   return suffixes[bestPrefixId].val ? value * suffixes[bestPrefixId].val :

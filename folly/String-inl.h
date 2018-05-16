@@ -96,6 +96,7 @@ void cUnescape(StringPiece str, String& out, bool strict) {
       continue;
     }
     out.append(&*last, p - last);
+    ++p;
     if (p == str.end()) {  // backslash at end of string
       if (strict) {
         throw std::invalid_argument("incomplete escape sequence");
@@ -104,7 +105,6 @@ void cUnescape(StringPiece str, String& out, bool strict) {
       last = p;
       continue;
     }
-    ++p;
     char e = detail::cUnescapeTable[static_cast<unsigned char>(*p)];
     if (e == 'O') {  // octal
       unsigned char val = 0;
@@ -290,7 +290,7 @@ void internalSplit(DelimT delim, StringPiece sp, OutputIterator out,
     }
     return;
   }
-  if (boost::is_same<DelimT,StringPiece>::value && dSize == 1) {
+  if (std::is_same<DelimT, StringPiece>::value && dSize == 1) {
     // Call the char version because it is significantly faster.
     return internalSplit<OutStringT>(delimFront(delim), sp, out,
       ignoreEmpty);

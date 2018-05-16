@@ -28,7 +28,7 @@ class LifoSemMPMCQueue : public BlockingQueue<T> {
   // Note: The queue pre-allocates all memory for max_capacity
   explicit LifoSemMPMCQueue(size_t max_capacity) : queue_(max_capacity) {}
 
-  void add(T item) override {
+  bool add(T item) override {
     switch (kBehavior) { // static
       case QueueBehaviorIfFull::THROW:
         if (!queue_.write(std::move(item))) {
@@ -39,7 +39,7 @@ class LifoSemMPMCQueue : public BlockingQueue<T> {
         queue_.blockingWrite(std::move(item));
         break;
     }
-    sem_.post();
+    return sem_.post();
   }
 
   T take() override {
@@ -48,6 +48,16 @@ class LifoSemMPMCQueue : public BlockingQueue<T> {
       sem_.wait();
     }
     return item;
+  }
+
+  folly::Optional<T> try_take_for(std::chrono::milliseconds time) override {
+    T item;
+    while (!queue_.readIfNotEmpty(item)) {
+      if (!sem_.try_wait_for(time)) {
+        return folly::none;
+      }
+    }
+    return std::move(item);
   }
 
   size_t capacity() {

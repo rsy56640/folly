@@ -163,11 +163,11 @@ class TestHandler : public EventHandler {
   }
 
   struct EventRecord {
-    EventRecord(uint16_t events, size_t bytesRead, size_t bytesWritten)
-      : events(events)
+    EventRecord(uint16_t events_, size_t bytesRead_, size_t bytesWritten_)
+      : events(events_)
       , timestamp()
-      , bytesRead(bytesRead)
-      , bytesWritten(bytesWritten) {}
+      , bytesRead(bytesRead_)
+      , bytesWritten(bytesWritten_) {}
 
     uint16_t events;
     TimePoint timestamp;
@@ -1073,14 +1073,63 @@ TEST(EventBaseTest, DestroyTimeout) {
   T_CHECK_TIMEOUT(start, end, milliseconds(10));
 }
 
+/**
+ * Test the scheduled executor impl
+ */
+TEST(EventBaseTest, ScheduledFn) {
+  EventBase eb;
+
+  TimePoint timestamp1(false);
+  TimePoint timestamp2(false);
+  TimePoint timestamp3(false);
+  eb.schedule(std::bind(&TimePoint::reset, &timestamp1), milliseconds(9));
+  eb.schedule(std::bind(&TimePoint::reset, &timestamp2), milliseconds(19));
+  eb.schedule(std::bind(&TimePoint::reset, &timestamp3), milliseconds(39));
+
+  TimePoint start;
+  eb.loop();
+  TimePoint end;
+
+  T_CHECK_TIMEOUT(start, timestamp1, milliseconds(9));
+  T_CHECK_TIMEOUT(start, timestamp2, milliseconds(19));
+  T_CHECK_TIMEOUT(start, timestamp3, milliseconds(39));
+  T_CHECK_TIMEOUT(start, end, milliseconds(39));
+}
+
+TEST(EventBaseTest, ScheduledFnAt) {
+  EventBase eb;
+
+  TimePoint timestamp0(false);
+  TimePoint timestamp1(false);
+  TimePoint timestamp2(false);
+  TimePoint timestamp3(false);
+  eb.scheduleAt(
+      std::bind(&TimePoint::reset, &timestamp1), eb.now() - milliseconds(5));
+  eb.scheduleAt(
+      std::bind(&TimePoint::reset, &timestamp1), eb.now() + milliseconds(9));
+  eb.scheduleAt(
+      std::bind(&TimePoint::reset, &timestamp2), eb.now() + milliseconds(19));
+  eb.scheduleAt(
+      std::bind(&TimePoint::reset, &timestamp3), eb.now() + milliseconds(39));
+
+  TimePoint start;
+  eb.loop();
+  TimePoint end;
+
+  T_CHECK_TIME_LT(start, timestamp0, milliseconds(0));
+  T_CHECK_TIMEOUT(start, timestamp1, milliseconds(9));
+  T_CHECK_TIMEOUT(start, timestamp2, milliseconds(19));
+  T_CHECK_TIMEOUT(start, timestamp3, milliseconds(39));
+  T_CHECK_TIMEOUT(start, end, milliseconds(39));
+}
 
 ///////////////////////////////////////////////////////////////////////////
 // Test for runInThreadTestFunc()
 ///////////////////////////////////////////////////////////////////////////
 
 struct RunInThreadData {
-  RunInThreadData(int numThreads, int opsPerThread)
-    : opsPerThread(opsPerThread)
+  RunInThreadData(int numThreads, int opsPerThread_)
+    : opsPerThread(opsPerThread_)
     , opsToGo(numThreads*opsPerThread) {}
 
   EventBase evb;
@@ -1091,12 +1140,12 @@ struct RunInThreadData {
 };
 
 struct RunInThreadArg {
-  RunInThreadArg(RunInThreadData* data,
+  RunInThreadArg(RunInThreadData* data_,
                  int threadId,
-                 int value)
-    : data(data)
+                 int value_)
+    : data(data_)
     , thread(threadId)
-    , value(value) {}
+    , value(value_) {}
 
   RunInThreadData* data;
   int thread;
@@ -1756,11 +1805,11 @@ TEST(EventBaseTest, LoopKeepAlive) {
   EventBase evb;
 
   bool done = false;
-  std::thread t([&, loopKeepAlive = evb.getKeepAliveToken() ]() mutable {
+  std::thread t([&, loopKeepAlive = getKeepAliveToken(evb)]() mutable {
     /* sleep override */ std::this_thread::sleep_for(
         std::chrono::milliseconds(100));
     evb.runInEventBaseThread(
-        [&done, loopKeepAlive = std::move(loopKeepAlive) ] { done = true; });
+        [&done, loopKeepAlive = std::move(loopKeepAlive)] { done = true; });
   });
 
   evb.loop();
@@ -1777,11 +1826,11 @@ TEST(EventBaseTest, LoopKeepAliveInLoop) {
   std::thread t;
 
   evb.runInEventBaseThread([&] {
-    t = std::thread([&, loopKeepAlive = evb.getKeepAliveToken() ]() mutable {
+    t = std::thread([&, loopKeepAlive = getKeepAliveToken(evb)]() mutable {
       /* sleep override */ std::this_thread::sleep_for(
           std::chrono::milliseconds(100));
       evb.runInEventBaseThread(
-          [&done, loopKeepAlive = std::move(loopKeepAlive) ] { done = true; });
+          [&done, loopKeepAlive = std::move(loopKeepAlive)] { done = true; });
     });
   });
 
@@ -1805,9 +1854,9 @@ TEST(EventBaseTest, LoopKeepAliveWithLoopForever) {
 
   {
     auto* ev = evb.get();
-    Executor::KeepAlive keepAlive;
+    Executor::KeepAlive<EventBase> keepAlive;
     ev->runInEventBaseThreadAndWait(
-        [&ev, &keepAlive] { keepAlive = ev->getKeepAliveToken(); });
+        [&ev, &keepAlive] { keepAlive = getKeepAliveToken(ev); });
     ASSERT_FALSE(done) << "Loop finished before we asked it to";
     ev->terminateLoopSoon();
     /* sleep override */
@@ -1825,11 +1874,9 @@ TEST(EventBaseTest, LoopKeepAliveShutdown) {
 
   bool done = false;
 
-  std::thread t([
-    &done,
-    loopKeepAlive = evb->getKeepAliveToken(),
-    evbPtr = evb.get()
-  ]() mutable {
+  std::thread t([&done,
+                 loopKeepAlive = getKeepAliveToken(evb.get()),
+                 evbPtr = evb.get()]() mutable {
     /* sleep override */ std::this_thread::sleep_for(
         std::chrono::milliseconds(100));
     evbPtr->runInEventBaseThread(
@@ -1858,10 +1905,10 @@ TEST(EventBaseTest, LoopKeepAliveAtomic) {
   }
 
   for (size_t i = 0; i < kNumThreads; ++i) {
-    ts.emplace_back([ evbPtr = evb.get(), batonPtr = batons[i].get(), &done ] {
-      std::vector<Executor::KeepAlive> keepAlives;
+    ts.emplace_back([evbPtr = evb.get(), batonPtr = batons[i].get(), &done] {
+      std::vector<Executor::KeepAlive<EventBase>> keepAlives;
       for (size_t j = 0; j < kNumTasks; ++j) {
-        keepAlives.emplace_back(evbPtr->getKeepAliveToken());
+        keepAlives.emplace_back(getKeepAliveToken(evbPtr));
       }
 
       batonPtr->post();
@@ -1886,6 +1933,11 @@ TEST(EventBaseTest, LoopKeepAliveAtomic) {
   for (auto& t : ts) {
     t.join();
   }
+}
+
+TEST(EventBaseTest, LoopKeepAliveCast) {
+  EventBase evb;
+  Executor::KeepAlive<> keepAlive = getKeepAliveToken(evb);
 }
 
 TEST(EventBaseTest, DrivableExecutorTest) {
@@ -1915,6 +1967,13 @@ TEST(EventBaseTest, DrivableExecutorTest) {
   EXPECT_TRUE(f2.isReady());
 
   t.join();
+}
+
+TEST(EventBaseTest, IOExecutorTest) {
+  EventBase base;
+
+  // Ensure EventBase manages itself as an IOExecutor.
+  EXPECT_EQ(base.getEventBase(), &base);
 }
 
 TEST(EventBaseTest, RequestContextTest) {

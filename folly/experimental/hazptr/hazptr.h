@@ -17,7 +17,6 @@
 #define HAZPTR_H
 
 #include <atomic>
-#include <mutex>
 
 /* Stand-in for C++17 std::pmr::memory_resource */
 #include <folly/experimental/hazptr/memory_resource.h>
@@ -53,16 +52,6 @@ class hazptr_local;
 /** hazptr_priv: Per-thread list of retired objects pushed in bulk to domain */
 class hazptr_priv;
 
-class hazptr_priv_list {
-  std::mutex m_;
-  hazptr_priv* head_{nullptr};
-
- public:
-  void insert(hazptr_priv* rec);
-  void remove(hazptr_priv* rec);
-  void collect(hazptr_obj*& head, hazptr_obj*& tail);
-};
-
 /** hazptr_domain: Class of hazard pointer domains. Each domain manages a set
  *  of hazard pointers and a set of retired objects. */
 class hazptr_domain {
@@ -74,7 +63,9 @@ class hazptr_domain {
    * involved in calculations related to the value of rcount_. */
   std::atomic<int> hcount_ = {0};
   std::atomic<int> rcount_ = {0};
-  hazptr_priv_list priv_;
+
+  static constexpr uint64_t syncTimePeriod_{2000000000}; // in ns
+  std::atomic<uint64_t> syncTime_{0};
 
  public:
   constexpr explicit hazptr_domain(
@@ -90,11 +81,9 @@ class hazptr_domain {
   template <typename T, typename D = std::default_delete<T>>
   void retire(T* obj, D reclaim = {});
   void cleanup();
-  void priv_add(hazptr_priv* rec);
-  void priv_remove(hazptr_priv* rec);
+  void tryTimedCleanup();
 
  private:
-  friend class hazptr_obj_batch;
   friend class hazptr_holder;
   template <typename, typename>
   friend class hazptr_obj_base;
@@ -127,7 +116,6 @@ void hazptr_cleanup(hazptr_domain& domain = default_hazptr_domain());
 
 /** Definition of hazptr_obj */
 class hazptr_obj {
-  friend class hazptr_obj_batch;
   friend class hazptr_domain;
   template <typename, typename>
   friend class hazptr_obj_base;
@@ -139,9 +127,20 @@ class hazptr_obj {
   hazptr_obj* next_;
 
  public:
-  hazptr_obj() {
-    // Only for catching misuse bugs like double retire
-    next_ = this;
+  // All constructors set next_ to this in order to catch misuse bugs like
+  // double retire.
+  hazptr_obj() noexcept : next_(this) {}
+
+  hazptr_obj(const hazptr_obj&) noexcept : next_(this) {}
+
+  hazptr_obj(hazptr_obj&&) noexcept : next_(this) {}
+
+  hazptr_obj& operator=(const hazptr_obj&) {
+    return *this;
+  }
+
+  hazptr_obj& operator=(hazptr_obj&&) {
+    return *this;
   }
 
  private:
@@ -178,8 +177,6 @@ class hazptr_obj_base : public hazptr_obj {
 /** Definition of hazptr_recounted_obj_base */
 template <typename T, typename D = std::default_delete<T>>
 class hazptr_obj_base_refcounted : public hazptr_obj {
-  friend class hazptr_obj_batch;
-
  public:
   /* Retire a removed object and pass the responsibility for
    * reclaiming it to the hazptr library */
@@ -328,10 +325,10 @@ class hazptr_local {
 
  private:
   aligned_hazptr_holder raw_[M];
-  bool need_destruct_{false};
+  bool slow_path_{false};
 };
 
 } // namespace hazptr
 } // namespace folly
 
-#include "hazptr-impl.h"
+#include <folly/experimental/hazptr/hazptr-impl.h>

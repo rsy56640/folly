@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "Fiber.h"
+#include <folly/fibers/Fiber.h>
 
 #include <glog/logging.h>
 #include <algorithm>
@@ -170,6 +170,7 @@ void Fiber::preempt(State state) {
     DCHECK_EQ(fiberManager_.activeFiber_, this);
     DCHECK_EQ(state_, RUNNING);
     DCHECK_NE(state, RUNNING);
+    DCHECK(!std::current_exception());
 
     state_ = state;
 

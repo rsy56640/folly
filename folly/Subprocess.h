@@ -106,6 +106,7 @@
 #include <vector>
 
 #include <boost/container/flat_map.hpp>
+#include <boost/operators.hpp>
 
 #include <folly/Exception.h>
 #include <folly/File.h>
@@ -484,7 +485,7 @@ class Subprocess {
    * The shell to use is taken from the environment variable $SHELL,
    * or /bin/sh if $SHELL is unset.
    */
-  FOLLY_DEPRECATED("Prefer not running in a shell or use `shellify`.")
+  [[deprecated("Prefer not running in a shell or use `shellify`.")]]
   explicit Subprocess(
       const std::string& cmd,
       const Options& options = Options(),

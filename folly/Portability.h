@@ -50,15 +50,6 @@ constexpr bool kHasUnalignedAccess = false;
   __attribute__((__format__(__printf__, format_param, dots_param)))
 #endif
 
-// deprecated
-#if defined(__clang__) || defined(__GNUC__)
-# define FOLLY_DEPRECATED(msg) __attribute__((__deprecated__(msg)))
-#elif defined(_MSC_VER)
-# define FOLLY_DEPRECATED(msg) __declspec(deprecated(msg))
-#else
-# define FOLLY_DEPRECATED(msg)
-#endif
-
 // warn unused result
 #if defined(__has_cpp_attribute)
 #if __has_cpp_attribute(nodiscard)
@@ -155,30 +146,48 @@ constexpr bool kIsSanitize = false;
 # define FOLLY_PUSH_WARNING __pragma(warning(push))
 # define FOLLY_POP_WARNING __pragma(warning(pop))
 // Disable the GCC warnings.
+# define FOLLY_GNU_DISABLE_WARNING(warningName)
 # define FOLLY_GCC_DISABLE_WARNING(warningName)
+# define FOLLY_CLANG_DISABLE_WARNING(warningName)
 # define FOLLY_MSVC_DISABLE_WARNING(warningNumber) __pragma(warning(disable: warningNumber))
-#elif defined(__clang__) || defined(__GNUC__)
+#elif defined(__GNUC__)
+// Clang & GCC
 # define FOLLY_PUSH_WARNING _Pragma("GCC diagnostic push")
 # define FOLLY_POP_WARNING _Pragma("GCC diagnostic pop")
-# define FOLLY_GCC_DISABLE_WARNING_INTERNAL2(warningName) #warningName
-# define FOLLY_GCC_DISABLE_WARNING(warningName) \
+# define FOLLY_GNU_DISABLE_WARNING_INTERNAL2(warningName) #warningName
+# define FOLLY_GNU_DISABLE_WARNING(warningName) \
   _Pragma(                                      \
-  FOLLY_GCC_DISABLE_WARNING_INTERNAL2(GCC diagnostic ignored warningName))
-// Disable the MSVC warnings.
+  FOLLY_GNU_DISABLE_WARNING_INTERNAL2(GCC diagnostic ignored warningName))
+# ifdef __clang__
+#  define FOLLY_CLANG_DISABLE_WARNING(warningName) FOLLY_GNU_DISABLE_WARNING(warningName)
+#  define FOLLY_GCC_DISABLE_WARNING(warningName)
+# else
+#  define FOLLY_CLANG_DISABLE_WARNING(warningName)
+#  define FOLLY_GCC_DISABLE_WARNING(warningName) FOLLY_GNU_DISABLE_WARNING(warningName)
+# endif
 # define FOLLY_MSVC_DISABLE_WARNING(warningNumber)
 #else
 # define FOLLY_PUSH_WARNING
 # define FOLLY_POP_WARNING
+# define FOLLY_GNU_DISABLE_WARNING(warningName)
 # define FOLLY_GCC_DISABLE_WARNING(warningName)
+# define FOLLY_CLANG_DISABLE_WARNING(warningName)
 # define FOLLY_MSVC_DISABLE_WARNING(warningNumber)
 #endif
 
+
 #ifdef FOLLY_HAVE_SHADOW_LOCAL_WARNINGS
-#define FOLLY_GCC_DISABLE_NEW_SHADOW_WARNINGS        \
-  FOLLY_GCC_DISABLE_WARNING("-Wshadow-compatible-local") \
-  FOLLY_GCC_DISABLE_WARNING("-Wshadow-local")
+#define FOLLY_GCC_DISABLE_NEW_SHADOW_WARNINGS            \
+  FOLLY_GNU_DISABLE_WARNING("-Wshadow-compatible-local") \
+  FOLLY_GNU_DISABLE_WARNING("-Wshadow-local")            \
+  FOLLY_GNU_DISABLE_WARNING("-Wshadow")
 #else
 #define FOLLY_GCC_DISABLE_NEW_SHADOW_WARNINGS /* empty */
+#endif
+
+// Globally disable -Wshadow for gcc < 5.
+#if __GNUC__ == 4 && !__clang__
+FOLLY_GCC_DISABLE_NEW_SHADOW_WARNINGS
 #endif
 
 /* Platform specific TLS support
@@ -341,10 +350,28 @@ constexpr auto kIsLinux = false;
 
 #if defined(_WIN32)
 constexpr auto kIsWindows = true;
-constexpr auto kMscVer = _MSC_VER;
 #else
 constexpr auto kIsWindows = false;
+#endif
+
+#if _MSC_VER
+constexpr auto kMscVer = _MSC_VER;
+#else
 constexpr auto kMscVer = 0;
+#endif
+
+#if FOLLY_MICROSOFT_ABI_VER
+constexpr auto kMicrosoftAbiVer = FOLLY_MICROSOFT_ABI_VER;
+#else
+constexpr auto kMicrosoftAbiVer = 0;
+#endif
+
+// cpplib is an implementation of the standard library, and is the one typically
+// used with the msvc compiler
+#if _CPPLIB_VER
+constexpr auto kCpplibVer = _CPPLIB_VER;
+#else
+constexpr auto kCpplibVer = 0;
 #endif
 } // namespace folly
 
@@ -395,7 +422,8 @@ constexpr auto kMscVer = 0;
 #define FOLLY_HAS_COROUTINES 1
 #endif
 
-// MSVC 2017.5
-#if __cpp_noexcept_function_type >= 201510 || _MSC_FULL_VER >= 191225816
+// MSVC 2017.5 && C++17
+#if __cpp_noexcept_function_type >= 201510 || \
+    (_MSC_FULL_VER >= 191225816 && _MSVC_LANG > 201402)
 #define FOLLY_HAVE_NOEXCEPT_FUNCTION_TYPE 1
 #endif

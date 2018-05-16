@@ -33,6 +33,12 @@
 #include <sys/types.h>
 #include <thread>
 
+#if FOLLY_HAVE_VLA
+#define FOLLY_HAVE_VLA_01 1
+#else
+#define FOLLY_HAVE_VLA_01 0
+#endif
+
 using std::string;
 using std::unique_ptr;
 
@@ -235,6 +241,23 @@ int AsyncSocket::SendMsgParamsCallback::getDefaultFlags(
 
 namespace {
 static AsyncSocket::SendMsgParamsCallback defaultSendMsgParamsCallback;
+
+// Based on flags, signal the transparent handler to disable certain functions
+void disableTransparentFunctions(int fd, bool noTransparentTls, bool noTSocks) {
+#if __linux__
+  if (noTransparentTls) {
+    // Ignore return value, errors are ok
+    VLOG(5) << "Disabling TTLS for fd " << fd;
+    ::setsockopt(fd, SOL_SOCKET, SO_NO_TRANSPARENT_TLS, nullptr, 0);
+  }
+  if (noTSocks) {
+    VLOG(5) << "Disabling TSOCKS for fd " << fd;
+    // Ignore return value, errors are ok
+    ::setsockopt(fd, SOL_SOCKET, SO_NO_TSOCKS, nullptr, 0);
+  }
+#endif
+}
+
 } // namespace
 
 AsyncSocket::AsyncSocket()
@@ -280,6 +303,7 @@ AsyncSocket::AsyncSocket(EventBase* evb, int fd, uint32_t zeroCopyBufId)
           << ", zeroCopyBufId=" << zeroCopyBufId << ")";
   init();
   fd_ = fd;
+  disableTransparentFunctions(fd_, noTransparentTls_, noTSocks_);
   setCloseOnExec();
   state_ = StateEnum::ESTABLISHED;
 }
@@ -429,6 +453,7 @@ void AsyncSocket::connect(ConnectCallback* callback,
           withAddr("failed to create socket"),
           errnoCopy);
     }
+    disableTransparentFunctions(fd_, noTransparentTls_, noTSocks_);
     if (const auto shutdownSocketSet = wShutdownSocketSet_.lock()) {
       shutdownSocketSet->add(fd_);
     }
@@ -556,17 +581,6 @@ void AsyncSocket::connect(ConnectCallback* callback,
 }
 
 int AsyncSocket::socketConnect(const struct sockaddr* saddr, socklen_t len) {
-#if __linux__
-  if (noTransparentTls_) {
-    // Ignore return value, errors are ok
-    setsockopt(fd_, SOL_SOCKET, SO_NO_TRANSPARENT_TLS, nullptr, 0);
-  }
-  if (noTSocks_) {
-    VLOG(4) << "Disabling TSOCKS for fd " << fd_;
-    // Ignore return value, errors are ok
-    setsockopt(fd_, SOL_SOCKET, SO_NO_TSOCKS, nullptr, 0);
-  }
-#endif
   int rv = fsp::connect(fd_, saddr, len);
   if (rv < 0) {
     auto errnoCopy = errno;
@@ -982,8 +996,8 @@ void AsyncSocket::writeChain(WriteCallback* callback, unique_ptr<IOBuf>&& buf,
   if (count <= kSmallSizeMax) {
     // suppress "warning: variable length array 'vec' is used [-Wvla]"
     FOLLY_PUSH_WARNING
-    FOLLY_GCC_DISABLE_WARNING("-Wvla")
-    iovec vec[BOOST_PP_IF(FOLLY_HAVE_VLA, count, kSmallSizeMax)];
+    FOLLY_GNU_DISABLE_WARNING("-Wvla")
+    iovec vec[BOOST_PP_IF(FOLLY_HAVE_VLA_01, count, kSmallSizeMax)];
     FOLLY_POP_WARNING
 
     writeChainImpl(callback, vec, count, std::move(buf), flags);
@@ -2466,6 +2480,11 @@ void AsyncSocket::startFail() {
   // Ensure that SHUT_READ and SHUT_WRITE are set,
   // so all future attempts to read or write will be rejected
   shutdownFlags_ |= (SHUT_READ | SHUT_WRITE);
+
+  // Cancel any scheduled immediate read.
+  if (immediateReadHandler_.isLoopCallbackScheduled()) {
+    immediateReadHandler_.cancelLoopCallback();
+  }
 
   if (eventFlags_ != EventHandler::NONE) {
     eventFlags_ = EventHandler::NONE;

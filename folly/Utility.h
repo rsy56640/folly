@@ -17,6 +17,7 @@
 #pragma once
 
 #include <cstdint>
+#include <limits>
 #include <type_traits>
 #include <utility>
 
@@ -97,6 +98,23 @@ constexpr T const& as_const(T& t) noexcept {
 
 template <class T>
 void as_const(T const&&) = delete;
+
+#endif
+
+#if __cpp_lib_exchange_function || _LIBCPP_STD_VER > 11 || _MSC_VER
+
+/* using override */ using std::exchange;
+
+#else
+
+//  mimic: std::exchange, C++14
+//  from: http://en.cppreference.com/w/cpp/utility/exchange, CC-BY-SA
+template <class T, class U = T>
+T exchange(T& obj, U&& new_value) {
+  T old_value = std::move(obj);
+  obj = std::forward<U>(new_value);
+  return old_value;
+}
 
 #endif
 
@@ -182,6 +200,8 @@ using make_integer_sequence = typename utility_detail::make_seq<
 
 template <std::size_t Size>
 using make_index_sequence = make_integer_sequence<std::size_t, Size>;
+template <class... T>
+using index_sequence_for = make_index_sequence<sizeof...(T)>;
 
 /**
  *  Backports from C++17 of:
@@ -363,5 +383,21 @@ using MoveOnly = moveonly_::MoveOnly;
  */
 template <bool B>
 using Bool = std::integral_constant<bool, B>;
+
+template <typename T>
+constexpr auto to_signed(T const& t) -> typename std::make_signed<T>::type {
+  using S = typename std::make_signed<T>::type;
+  // note: static_cast<S>(t) would be more straightforward, but it would also be
+  // implementation-defined behavior and that is typically to be avoided; the
+  // following code optimized into the same thing, though
+  return std::numeric_limits<S>::max() < t ? -static_cast<S>(~t) + S{-1}
+                                           : static_cast<S>(t);
+}
+
+template <typename T>
+constexpr auto to_unsigned(T const& t) -> typename std::make_unsigned<T>::type {
+  using U = typename std::make_unsigned<T>::type;
+  return static_cast<U>(t);
+}
 
 } // namespace folly

@@ -47,18 +47,15 @@ template <typename Function>
 class CallbackHolder {
  public:
   void registerCallback(Function f) {
-    SYNCHRONIZED(callbacks_) {
-      callbacks_.push_back(std::move(f));
-    }
+    callbacks_.wlock()->push_back(std::move(f));
   }
 
   // always inline to enforce kInternalFramesNumber
   template <typename... Args>
   FOLLY_ALWAYS_INLINE void invoke(Args... args) {
-    SYNCHRONIZED_CONST(callbacks_) {
-      for (auto& cb : callbacks_) {
-        cb(args...);
-      }
+    auto callbacksLock = callbacks_.rlock();
+    for (auto& cb : *callbacksLock) {
+      cb(args...);
     }
   }
 
@@ -80,11 +77,11 @@ namespace exception_tracer {
     get##NAME##Callbacks().registerCallback(callback);           \
   }
 
-DECLARE_CALLBACK(CxaThrow);
-DECLARE_CALLBACK(CxaBeginCatch);
-DECLARE_CALLBACK(CxaRethrow);
-DECLARE_CALLBACK(CxaEndCatch);
-DECLARE_CALLBACK(RethrowException);
+DECLARE_CALLBACK(CxaThrow)
+DECLARE_CALLBACK(CxaBeginCatch)
+DECLARE_CALLBACK(CxaRethrow)
+DECLARE_CALLBACK(CxaEndCatch)
+DECLARE_CALLBACK(RethrowException)
 
 } // namespace exception_tracer
 } // namespace folly

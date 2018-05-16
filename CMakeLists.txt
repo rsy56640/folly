@@ -10,7 +10,6 @@ endif()
 
 # includes
 set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/CMake" ${CMAKE_MODULE_PATH})
-include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
 # package information
 set(PACKAGE_NAME      "folly")
@@ -23,6 +22,15 @@ set(PACKAGE_BUGREPORT "https://github.com/facebook/folly/issues")
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
 project(${PACKAGE_NAME} CXX C)
+
+set(INCLUDE_INSTALL_DIR include CACHE STRING
+    "The subdirectory where header files should be installed")
+set(LIB_INSTALL_DIR lib CACHE STRING
+    "The subdirectory where libraries should be installed")
+set(BIN_INSTALL_DIR bin CACHE STRING
+    "The subdirectory where binaries should be installed")
+set(CMAKE_INSTALL_DIR lib/cmake/folly CACHE STRING
+    "The subdirectory where CMake package config files should be installed")
 
 option(BUILD_SHARED_LIBS
   "If enabled, build folly as a shared library.  \
@@ -42,8 +50,10 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
   endif()
 
   if (MSVC_VERSION GREATER_EQUAL 1910 AND MSVC_VERSION LESS 1920)
+    set(MSVC_IS_2015 OFF)
     set(MSVC_IS_2017 ON)
   elseif (MSVC_VERSION EQUAL 1900)
+    set(MSVC_IS_2015 ON)
     set(MSVC_IS_2017 OFF)
   else()
     message(
@@ -90,14 +100,14 @@ auto_sources(hfiles "*.h" "RECURSE" "${FOLLY_DIR}")
 # library sources.  Test sources are listed separately below.
 REMOVE_MATCHES_FROM_LISTS(files hfiles
   MATCHES
-    "/build/"
-    "/experimental/exception_tracer/"
-    "/experimental/hazptr/bench/"
-    "/experimental/hazptr/example/"
-    "/experimental/logging/example/"
-    "/futures/exercises/"
-    "/test/"
-    "/tools/"
+    "^${FOLLY_DIR}/build/"
+    "^${FOLLY_DIR}/experimental/exception_tracer/"
+    "^${FOLLY_DIR}/experimental/hazptr/bench/"
+    "^${FOLLY_DIR}/experimental/hazptr/example/"
+    "^${FOLLY_DIR}/futures/exercises/"
+    "^${FOLLY_DIR}/logging/example/"
+    "^${FOLLY_DIR}/(.*/)?test/"
+    "^${FOLLY_DIR}/tools/"
     "Benchmark.cpp$"
     "Test.cpp$"
 )
@@ -142,7 +152,7 @@ list(APPEND hfiles
 if (NOT FOLLY_USE_SYMBOLIZER)
   REMOVE_MATCHES_FROM_LISTS(files hfiles
     MATCHES
-      "/experimental/symbolizer/"
+      "^${FOLLY_DIR}/experimental/symbolizer/"
   )
   list(REMOVE_ITEM files
     ${FOLLY_DIR}/SingletonStackTrace.cpp
@@ -184,54 +194,37 @@ add_library(folly_base OBJECT
   ${files} ${hfiles}
   ${CMAKE_CURRENT_BINARY_DIR}/folly/folly-config.h
 )
-if (BUILD_SHARED_LIBS)
-  set_property(TARGET folly_base PROPERTY POSITION_INDEPENDENT_CODE ON)
-endif()
 auto_source_group(folly ${FOLLY_DIR} ${files} ${hfiles})
 apply_folly_compile_options_to_target(folly_base)
-target_include_directories(folly_base PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
 # Add the generated files to the correct source group.
 source_group("folly" FILES ${CMAKE_CURRENT_BINARY_DIR}/folly/folly-config.h)
 source_group("folly\\build" FILES
   ${CMAKE_CURRENT_BINARY_DIR}/folly/build/FingerprintTables.cpp
 )
 
-if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
-  set(FOLLY_LINK_LIBRARIES
-    ${FOLLY_LINK_LIBRARIES}
-    Iphlpapi.lib
-    Ws2_32.lib
-  )
-endif()
-
-set(FOLLY_LINK_LIBRARIES
-  ${FOLLY_LINK_LIBRARIES}
-  ${FOLLY_SHINY_DEPENDENCIES}
+target_include_directories(folly_deps
+  INTERFACE
+    $<BUILD_INTERFACE:
+      ${CMAKE_CURRENT_SOURCE_DIR}
+      ${CMAKE_CURRENT_BINARY_DIR}>
+    $<INSTALL_INTERFACE:include>
 )
 
 target_include_directories(folly_base
   PUBLIC
-    ${FOLLY_INCLUDE_DIRECTORIES}
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>
+    $<TARGET_PROPERTY:folly_deps,INTERFACE_INCLUDE_DIRECTORIES>
 )
-
-foreach (LIB ${FOLLY_SHINY_DEPENDENCIES})
-  target_include_directories(folly_base PUBLIC $<TARGET_PROPERTY:${LIB},INCLUDE_DIRECTORIES>)
-  target_compile_definitions(folly_base PUBLIC $<TARGET_PROPERTY:${LIB},INTERFACE_COMPILE_DEFINITIONS>)
-endforeach()
-
-if (FOLLY_HAVE_PTHREAD)
-  target_include_directories(folly_base PUBLIC ${LIBPTHREAD_INCLUDE_DIRS})
-endif()
+target_compile_definitions(folly_base
+  PUBLIC
+    $<TARGET_PROPERTY:folly_deps,INTERFACE_COMPILE_DEFINITIONS>
+)
 
 # Now to generate the fingerprint tables
 add_executable(GenerateFingerprintTables
   ${FOLLY_DIR}/build/GenerateFingerprintTables.cpp
   $<TARGET_OBJECTS:folly_base>
 )
-target_link_libraries(GenerateFingerprintTables PRIVATE ${FOLLY_LINK_LIBRARIES})
-target_include_directories(GenerateFingerprintTables PRIVATE $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>)
-add_dependencies(GenerateFingerprintTables folly_base)
+target_link_libraries(GenerateFingerprintTables PRIVATE folly_deps)
 apply_folly_compile_options_to_target(GenerateFingerprintTables)
 set_property(TARGET GenerateFingerprintTables PROPERTY FOLDER "Build")
 source_group("" FILES ${FOLLY_DIR}/build/GenerateFingerprintTables.cpp)
@@ -254,9 +247,7 @@ add_library(folly_fingerprint STATIC
   ${FOLLY_DIR}/detail/FingerprintPolynomial.h
   $<TARGET_OBJECTS:folly_base>
 )
-target_link_libraries(folly_fingerprint PRIVATE ${FOLLY_LINK_LIBRARIES})
-target_include_directories(folly_fingerprint PRIVATE $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>)
-add_dependencies(folly_fingerprint folly_base)
+target_link_libraries(folly_fingerprint PRIVATE folly_deps)
 apply_folly_compile_options_to_target(folly_fingerprint)
 
 # We want to generate a single library and target for folly, but we needed a
@@ -267,49 +258,70 @@ add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/folly_dep.cpp
   COMMAND ${CMAKE_COMMAND} -E touch ${CMAKE_CURRENT_BINARY_DIR}/folly_dep.cpp
   DEPENDS folly_base folly_fingerprint
 )
-add_library(folly ${CMAKE_CURRENT_BINARY_DIR}/folly_dep.cpp $<TARGET_OBJECTS:folly_base>)
+add_library(folly
+  ${CMAKE_CURRENT_BINARY_DIR}/folly_dep.cpp
+  $<TARGET_OBJECTS:folly_base>
+)
 apply_folly_compile_options_to_target(folly)
 source_group("" FILES ${CMAKE_CURRENT_BINARY_DIR}/folly_dep.cpp)
 
-target_link_libraries(folly PUBLIC ${FOLLY_LINK_LIBRARIES})
-target_include_directories(folly PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>)
+target_link_libraries(folly PUBLIC folly_deps)
 
-install(TARGETS folly
+install(TARGETS folly folly_deps
   EXPORT folly
   RUNTIME DESTINATION bin
-  LIBRARY DESTINATION lib
-  ARCHIVE DESTINATION lib)
+  LIBRARY DESTINATION ${LIB_INSTALL_DIR}
+  ARCHIVE DESTINATION ${LIB_INSTALL_DIR})
 auto_install_files(folly ${FOLLY_DIR}
   ${hfiles}
   ${FOLLY_DIR}/Fingerprint.h
   ${FOLLY_DIR}/detail/SlowFingerprint.h
   ${FOLLY_DIR}/detail/FingerprintPolynomial.h
 )
-install(FILES ${CMAKE_CURRENT_BINARY_DIR}/folly/folly-config.h DESTINATION include/folly)
 install(
-  EXPORT folly
-  DESTINATION share/folly
-  NAMESPACE Folly::
-  FILE folly-targets.cmake
+  FILES ${CMAKE_CURRENT_BINARY_DIR}/folly/folly-config.h
+  DESTINATION ${INCLUDE_INSTALL_DIR}/folly
+  COMPONENT dev
 )
 
-# We need a wrapper config file to do the find_package calls to ensure
-# that all our dependencies are available to link against.
-file(
-  COPY ${CMAKE_CURRENT_SOURCE_DIR}/CMake/folly-deps.cmake
-  DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/
+# Generate the folly-config.cmake file for installation so that
+# downstream projects that use on folly can easily depend on it in their CMake
+# files using "find_package(folly CONFIG)"
+include(CMakePackageConfigHelpers)
+configure_package_config_file(
+  CMake/folly-config.cmake.in
+  folly-config.cmake
+  INSTALL_DESTINATION ${CMAKE_INSTALL_DIR}
+  PATH_VARS
+    INCLUDE_INSTALL_DIR
+    CMAKE_INSTALL_DIR
 )
-file(APPEND ${CMAKE_CURRENT_BINARY_DIR}/folly-deps.cmake "\ninclude(folly-targets.cmake)\n")
-install(FILES ${CMAKE_CURRENT_BINARY_DIR}/folly-deps.cmake DESTINATION share/folly RENAME folly-config.cmake)
+install(
+  FILES ${CMAKE_CURRENT_BINARY_DIR}/folly-config.cmake
+  DESTINATION ${CMAKE_INSTALL_DIR}
+  COMPONENT dev
+)
+install(
+  EXPORT folly
+  DESTINATION ${CMAKE_INSTALL_DIR}
+  NAMESPACE Folly::
+  FILE folly-targets.cmake
+  COMPONENT dev
+)
 
 option(BUILD_TESTS "If enabled, compile the tests." OFF)
 option(BUILD_BROKEN_TESTS "If enabled, compile tests that are known to be broken." OFF)
 option(BUILD_HANGING_TESTS "If enabled, compile tests that are known to hang." OFF)
 option(BUILD_SLOW_TESTS "If enabled, compile tests that take a while to run in debug mode." OFF)
 if (BUILD_TESTS)
+  option(USE_CMAKE_GOOGLE_TEST_INTEGRATION "If enabled, use the google test integration included in CMake." ON)
   find_package(GMock MODULE REQUIRED)
-  include(GoogleTest OPTIONAL RESULT_VARIABLE HAVE_CMAKE_GTEST)
-  enable_testing()
+  if (USE_CMAKE_GOOGLE_TEST_INTEGRATION)
+    include(GoogleTest OPTIONAL RESULT_VARIABLE HAVE_CMAKE_GTEST)
+    enable_testing()
+  else()
+    set(HAVE_CMAKE_GTEST OFF)
+  endif()
 
   # The ThreadLocalTest code uses a helper shared library for one of its tests.
   # This can only be built if folly itself was built as a shared library.
@@ -332,8 +344,10 @@ if (BUILD_TESTS)
     ${FOLLY_DIR}/test/SingletonTestStructs.cpp
     ${FOLLY_DIR}/test/SocketAddressTestHelper.cpp
     ${FOLLY_DIR}/test/SocketAddressTestHelper.h
-    ${FOLLY_DIR}/experimental/logging/test/TestLogHandler.cpp
-    ${FOLLY_DIR}/experimental/logging/test/TestLogHandler.h
+    ${FOLLY_DIR}/logging/test/ConfigHelpers.cpp
+    ${FOLLY_DIR}/logging/test/ConfigHelpers.h
+    ${FOLLY_DIR}/logging/test/TestLogHandler.cpp
+    ${FOLLY_DIR}/logging/test/TestLogHandler.h
     ${FOLLY_DIR}/futures/test/TestExecutor.cpp
     ${FOLLY_DIR}/futures/test/TestExecutor.h
     ${FOLLY_DIR}/io/async/test/BlockingSocket.h
@@ -387,12 +401,20 @@ if (BUILD_TESTS)
       # EnumerateTest.cpp since it uses macros to define tests.
       #TEST enumerate_test SOURCES EnumerateTest.cpp
       TEST evicting_cache_map_test SOURCES EvictingCacheMapTest.cpp
+      TEST f14_pre_test SOURCES F14PreTest.cpp
+      TEST f14_map_test SOURCES F14MapTest.cpp
+      TEST f14_set_test SOURCES F14SetTest.cpp
       TEST foreach_test SOURCES ForeachTest.cpp
       TEST merge_test SOURCES MergeTest.cpp
       TEST sparse_byte_set_test SOURCES SparseByteSetTest.cpp
 
     DIRECTORY concurrency/test/
+      TEST atomic_shared_ptr_test SOURCES AtomicSharedPtrTest.cpp
       TEST cache_locality_test SOURCES CacheLocalityTest.cpp
+      TEST core_cached_shared_ptr_test SOURCES CoreCachedSharedPtrTest.cpp
+      TEST concurrent_hash_map_test SOURCES ConcurrentHashMapTest.cpp
+      TEST dynamic_bounded_queue_test SOURCES DynamicBoundedQueueTest.cpp
+      TEST unbounded_queue_test SOURCES UnboundedQueueTest.cpp
 
     DIRECTORY executors/test/
       TEST async_helpers_test SOURCES AsyncTest.cpp
@@ -435,7 +457,7 @@ if (BUILD_TESTS)
       #TEST async_io_test SOURCES AsyncIOTest.cpp
       TEST fs_util_test SOURCES FsUtilTest.cpp
 
-    DIRECTORY experimental/logging/test/
+    DIRECTORY logging/test/
       TEST async_file_writer_test SOURCES AsyncFileWriterTest.cpp
       TEST config_parser_test SOURCES ConfigParserTest.cpp
       TEST config_update_test SOURCES ConfigUpdateTest.cpp
@@ -595,7 +617,12 @@ if (BUILD_TESTS)
       TEST openssl_hash_test SOURCES OpenSSLHashTest.cpp
 
     DIRECTORY stats/test/
+      TEST buffered_stat_test SOURCES BufferedStatTest.cpp
+      TEST digest_builder_test SOURCES DigestBuilderTest.cpp
       TEST histogram_test SOURCES HistogramTest.cpp
+      TEST quantile_estimator_test SOURCES QuantileEstimatorTest.cpp
+      TEST sliding_window_test SOURCES SlidingWindowTest.cpp
+      TEST tdigest_test SOURCES TDigestTest.cpp
       TEST timeseries_histogram_test SOURCES TimeseriesHistogramTest.cpp
       TEST timeseries_test SOURCES TimeSeriesTest.cpp
 
@@ -653,6 +680,7 @@ if (BUILD_TESTS)
         SOURCES FunctionTest.cpp
       TEST function_ref_test SOURCES FunctionRefTest.cpp
       TEST futex_test SOURCES FutexTest.cpp
+      TEST glog_test SOURCES GLogTest.cpp
       TEST group_varint_test SOURCES GroupVarintTest.cpp
       TEST group_varint_test_ssse3 SOURCES GroupVarintTest.cpp
       TEST has_member_fn_traits_test SOURCES HasMemberFnTraitsTest.cpp
@@ -669,7 +697,6 @@ if (BUILD_TESTS)
       TEST lazy_test SOURCES LazyTest.cpp
       TEST lock_traits_test SOURCES LockTraitsTest.cpp
       TEST locks_test SOURCES SpinLockTest.cpp
-      TEST logging_test SOURCES LoggingTest.cpp
       TEST math_test SOURCES MathTest.cpp
       TEST map_util_test SOURCES MapUtilTest.cpp
       TEST memcpy_test SOURCES MemcpyTest.cpp

@@ -1,6 +1,5 @@
 # Some additional configuration options.
 option(MSVC_ENABLE_ALL_WARNINGS "If enabled, pass /Wall to the compiler." ON)
-option(MSVC_ENABLE_CPP_LATEST "If enabled, pass /std:c++latest to the compiler" ON)
 option(MSVC_ENABLE_DEBUG_INLINING "If enabled, enable inlining in the debug configuration. This allows /Zc:inline to be far more effective." OFF)
 option(MSVC_ENABLE_FAST_LINK "If enabled, pass /DEBUG:FASTLINK to the linker. This makes linking faster, but the gtest integration for Visual Studio can't currently handle the .pdbs generated." OFF)
 option(MSVC_ENABLE_LEAN_AND_MEAN_WINDOWS "If enabled, define WIN32_LEAN_AND_MEAN to include a smaller subset of Windows.h" ON)
@@ -8,6 +7,7 @@ option(MSVC_ENABLE_LTCG "If enabled, use Link Time Code Generation for Release b
 option(MSVC_ENABLE_PARALLEL_BUILD "If enabled, build multiple source files in parallel." ON)
 option(MSVC_ENABLE_STATIC_ANALYSIS "If enabled, do more complex static analysis and generate warnings appropriately." OFF)
 option(MSVC_USE_STATIC_RUNTIME "If enabled, build against the static, rather than the dynamic, runtime." OFF)
+option(MSVC_SUPPRESS_BOOST_CONFIG_OUTDATED "If enabled, suppress Boost's warnings about the config being out of date." ON)
 
 # Alas, option() doesn't support string values.
 set(MSVC_FAVORED_ARCHITECTURE "blend" CACHE STRING "One of 'blend', 'AMD64', 'INTEL64', or 'ATOM'. This tells the compiler to generate code optimized to run best on the specified architecture.")
@@ -24,6 +24,15 @@ set_property(
 if (NOT MSVC_FAVORED_ARCHITECTURE STREQUAL "blend" AND NOT MSVC_FAVORED_ARCHITECTURE STREQUAL "AMD64" AND NOT MSVC_FAVORED_ARCHITECTURE STREQUAL "INTEL64" AND NOT MSVC_FAVORED_ARCHITECTURE STREQUAL "ATOM")
   message(FATAL_ERROR "MSVC_FAVORED_ARCHITECTURE must be set to one of exactly, 'blend', 'AMD64', 'INTEL64', or 'ATOM'! Got '${MSVC_FAVORED_ARCHITECTURE}' instead!")
 endif()
+
+set(MSVC_LANGUAGE_VERSION "c++latest" CACHE STRING "One of 'c++14', 'c++17', or 'c++latest'. This determines which version of C++ to compile as.")
+set_property(
+  CACHE MSVC_LANGUAGE_VERSION
+  PROPERTY STRINGS
+    "c++14"
+    "c++17"
+    "c++latest"
+)
 
 ############################################################
 # We need to adjust a couple of the default option sets.
@@ -80,7 +89,7 @@ function(apply_folly_compile_options_to_target THETARGET)
       /Zc:threadSafeInit # Enable thread-safe function-local statics initialization.
       /Zc:throwingNew # Assume operator new throws on failure.
 
-      $<$<BOOL:${MSVC_ENABLE_CPP_LATEST}>:/std:c++latest> # Build in C++ Latest mode if requested.
+      /std:${MSVC_LANGUAGE_VERSION} # Build in the requested version of C++
 
       # This is only supported by MSVC 2017
       $<$<BOOL:${MSVC_IS_2017}>:/permissive-> # Be mean, don't allow bad non-standard stuff (C++/CLI, __declspec, etc. are all left intact).
@@ -179,6 +188,13 @@ function(apply_folly_compile_options_to_target THETARGET)
       /wd4701 # Potentially uninitialized local variable used.
       /wd4702 # Unreachable code.
 
+      # MSVC 2015 only:
+      $<$<BOOL:${MSVC_IS_2015}>:
+        /wd4268 # Static/global data initialized with compiler generated default constructor fills the object with zeros.
+        /wd4510 # Default constructor was implicitly defined as deleted.
+        /wd4814 # In C++14 'constexpr' will not imply 'const'.
+      >
+      
       # These warnings are disabled because we've
       # enabled all warnings. If all warnings are
       # not enabled, we still need to disable them
@@ -257,6 +273,7 @@ function(apply_folly_compile_options_to_target THETARGET)
 
       $<$<BOOL:${MSVC_ENABLE_CPP_LATEST}>:_HAS_AUTO_PTR_ETC=1> # We're building in C++ 17 or greater mode, but certain dependencies (Boost) still have dependencies on unary_function and binary_function, so we have to make sure not to remove them.
       $<$<BOOL:${MSVC_ENABLE_LEAN_AND_MEAN_WINDOWS}>:WIN32_LEAN_AND_MEAN> # Don't include most of Windows.h
+      $<$<BOOL:${MSVC_SUPPRESS_BOOST_CONFIG_OUTDATED}>:BOOST_CONFIG_SUPPRESS_OUTDATED_MESSAGE> # MSVC moves faster than boost, so add a quick way to disable the messages.
   )
 
   # Ignore a warning about an object file not defining any symbols,
@@ -283,3 +300,9 @@ function(apply_folly_compile_options_to_target THETARGET)
     set_property(TARGET ${THETARGET} APPEND_STRING PROPERTY LINK_FLAGS_RELEASE " /LTCG")
   endif()
 endfunction()
+
+target_link_libraries(folly_deps
+  INTERFACE
+    Iphlpapi.lib
+    Ws2_32.lib
+)

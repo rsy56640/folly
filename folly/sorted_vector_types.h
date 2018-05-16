@@ -72,7 +72,7 @@
 
 #include <folly/Traits.h>
 #include <folly/Utility.h>
-#include <folly/portability/BitsFunctexcept.h>
+#include <folly/lang/Exception.h>
 
 namespace folly {
 
@@ -566,7 +566,7 @@ class sorted_vector_map
  public:
   typedef Key                                       key_type;
   typedef Value                                     mapped_type;
-  typedef std::pair<key_type,mapped_type>           value_type;
+  typedef typename Container::value_type            value_type;
   typedef Compare                                   key_compare;
 
   struct value_compare : private Compare {
@@ -737,7 +737,7 @@ class sorted_vector_map
     if (it != end()) {
       return it->second;
     }
-    std::__throw_out_of_range("sorted_vector_map::at");
+    throw_exception<std::out_of_range>("sorted_vector_map::at");
   }
 
   const mapped_type& at(const key_type& key) const {
@@ -745,7 +745,7 @@ class sorted_vector_map
     if (it != end()) {
       return it->second;
     }
-    std::__throw_out_of_range("sorted_vector_map::at");
+    throw_exception<std::out_of_range>("sorted_vector_map::at");
   }
 
   size_type count(const key_type& key) const {

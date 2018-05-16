@@ -53,7 +53,7 @@
       classname##__folly_traits_impl__<TTheClass_>::template test<TTheClass_>( \
           nullptr),                                                            \
       std::true_type,                                                          \
-      std::false_type>::type;
+      std::false_type>::type
 
 #define FOLLY_CREATE_HAS_MEMBER_FN_TRAITS_IMPL(classname, func_name, cv_qual) \
   template <typename TTheClass_, typename RTheReturn_, typename... TTheArgs_> \
@@ -300,11 +300,11 @@ namespace traits_detail {
   struct has_true_##name : std::conditional<                                 \
                                has_##name<T>::value,                         \
                                name##_is_true<T>,                            \
-                               std::false_type>::type {};
+                               std::false_type>::type {}
 
-FOLLY_HAS_TRUE_XXX(IsRelocatable)
-FOLLY_HAS_TRUE_XXX(IsZeroInitializable)
-FOLLY_HAS_TRUE_XXX(IsTriviallyCopyable)
+FOLLY_HAS_TRUE_XXX(IsRelocatable);
+FOLLY_HAS_TRUE_XXX(IsZeroInitializable);
+FOLLY_HAS_TRUE_XXX(IsTriviallyCopyable);
 
 #undef FOLLY_HAS_TRUE_XXX
 
@@ -465,7 +465,7 @@ struct StrictDisjunction
  * FOLLY_ASSUME_RELOCATABLE(MyType<T1, T2>)
  */
 #define FOLLY_ASSUME_RELOCATABLE(...) \
-  struct IsRelocatable<  __VA_ARGS__ > : std::true_type {};
+  struct IsRelocatable<__VA_ARGS__> : std::true_type {}
 
 /**
  * The FOLLY_ASSUME_FBVECTOR_COMPATIBLE* macros below encode the
@@ -495,31 +495,31 @@ struct StrictDisjunction
 #define FOLLY_ASSUME_FBVECTOR_COMPATIBLE(...) \
   namespace folly {                           \
   template <>                                 \
-  FOLLY_ASSUME_RELOCATABLE(__VA_ARGS__)       \
+  FOLLY_ASSUME_RELOCATABLE(__VA_ARGS__);      \
   }
 // Use this macro ONLY at global level (no namespace)
 #define FOLLY_ASSUME_FBVECTOR_COMPATIBLE_1(...) \
   namespace folly {                             \
   template <class T1>                           \
-  FOLLY_ASSUME_RELOCATABLE(__VA_ARGS__<T1>)     \
+  FOLLY_ASSUME_RELOCATABLE(__VA_ARGS__<T1>);    \
   }
 // Use this macro ONLY at global level (no namespace)
-#define FOLLY_ASSUME_FBVECTOR_COMPATIBLE_2(...) \
-  namespace folly {                             \
-  template <class T1, class T2>                 \
-  FOLLY_ASSUME_RELOCATABLE(__VA_ARGS__<T1, T2>) \
+#define FOLLY_ASSUME_FBVECTOR_COMPATIBLE_2(...)  \
+  namespace folly {                              \
+  template <class T1, class T2>                  \
+  FOLLY_ASSUME_RELOCATABLE(__VA_ARGS__<T1, T2>); \
   }
 // Use this macro ONLY at global level (no namespace)
-#define FOLLY_ASSUME_FBVECTOR_COMPATIBLE_3(...)     \
-  namespace folly {                                 \
-  template <class T1, class T2, class T3>           \
-  FOLLY_ASSUME_RELOCATABLE(__VA_ARGS__<T1, T2, T3>) \
+#define FOLLY_ASSUME_FBVECTOR_COMPATIBLE_3(...)      \
+  namespace folly {                                  \
+  template <class T1, class T2, class T3>            \
+  FOLLY_ASSUME_RELOCATABLE(__VA_ARGS__<T1, T2, T3>); \
   }
 // Use this macro ONLY at global level (no namespace)
-#define FOLLY_ASSUME_FBVECTOR_COMPATIBLE_4(...)         \
-  namespace folly {                                     \
-  template <class T1, class T2, class T3, class T4>     \
-  FOLLY_ASSUME_RELOCATABLE(__VA_ARGS__<T1, T2, T3, T4>) \
+#define FOLLY_ASSUME_FBVECTOR_COMPATIBLE_4(...)          \
+  namespace folly {                                      \
+  template <class T1, class T2, class T3, class T4>      \
+  FOLLY_ASSUME_RELOCATABLE(__VA_ARGS__<T1, T2, T3, T4>); \
   }
 
 /**
@@ -599,9 +599,9 @@ struct is_negative_impl<T, false> {
 // types) that violate -Wsign-compare and/or -Wbool-compare so suppress them
 // in order to not prevent all calling code from using it.
 FOLLY_PUSH_WARNING
-FOLLY_GCC_DISABLE_WARNING("-Wsign-compare")
+FOLLY_GNU_DISABLE_WARNING("-Wsign-compare")
 #if __GNUC_PREREQ(5, 0)
-FOLLY_GCC_DISABLE_WARNING("-Wbool-compare")
+FOLLY_GNU_DISABLE_WARNING("-Wbool-compare")
 #endif
 FOLLY_MSVC_DISABLE_WARNING(4388) // sign-compare
 FOLLY_MSVC_DISABLE_WARNING(4804) // bool-compare

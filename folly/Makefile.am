@@ -5,7 +5,14 @@ endif
 # Note that the order of SUBDIRS matters.
 # Many subdirectories depend on libfollytest from the test directory,
 # so it must appear before other directories
-SUBDIRS = . test experimental $(MAYBE_INIT) chrono/test io/test stats/test
+SUBDIRS = . \
+	  test \
+	  experimental \
+	  $(MAYBE_INIT) \
+	  chrono/test \
+	  io/test \
+	  logging \
+	  stats/test
 
 ACLOCAL_AMFLAGS = -I m4
 
@@ -59,13 +66,23 @@ nobase_follyinclude_HEADERS = \
 	container/Access.h \
 	container/Array.h \
 	container/detail/BitIteratorDetail.h \
+	container/detail/F14Defaults.h \
+	container/detail/F14IntrinsicsAvailability.h \
+	container/detail/F14Memory.h \
+	container/detail/F14Policy.h \
+	container/detail/F14Table.h \
 	container/Iterator.h \
 	container/Enumerate.h \
 	container/EvictingCacheMap.h \
+	container/F14Map-pre.h \
+	container/F14Map.h \
+	container/F14Set-pre.h \
+	container/F14Set.h \
 	container/Foreach.h \
 	container/Foreach-inl.h \
 	container/SparseByteSet.h \
 	ConstexprMath.h \
+	DefaultKeepAliveExecutor.h \
 	detail/AtFork.h \
 	detail/AtomicHashUtils.h \
 	detail/AtomicUnorderedMapUtils.h \
@@ -81,6 +98,7 @@ nobase_follyinclude_HEADERS = \
 	detail/PolyDetail.h \
 	detail/RangeCommon.h \
 	detail/RangeSse42.h \
+	detail/Singleton.h \
 	detail/SlowFingerprint.h \
 	detail/SocketFastOpen.h \
 	detail/StaticSingletonManager.h \
@@ -99,8 +117,9 @@ nobase_follyinclude_HEADERS = \
 	executors/IOExecutor.h \
 	executors/IOObjectCache.h \
 	executors/IOThreadPoolExecutor.h \
-	executors/NotificationQueueExecutor.h \
+	executors/QueuedImmediateExecutor.h \
 	executors/ScheduledExecutor.h \
+	executors/SequencedExecutor.h \
 	executors/SerialExecutor.h \
 	executors/ThreadPoolExecutor.h \
 	executors/ThreadedExecutor.h \
@@ -154,34 +173,6 @@ nobase_follyinclude_HEADERS = \
 	experimental/JemallocNodumpAllocator.h \
 	experimental/JSONSchema.h \
 	experimental/LockFreeRingBuffer.h \
-	experimental/logging/AsyncFileWriter.h \
-	experimental/logging/FileHandlerFactory.h \
-	experimental/logging/FileWriterFactory.h \
-	experimental/logging/GlogStyleFormatter.h \
-	experimental/logging/ImmediateFileWriter.h \
-	experimental/logging/Init.h \
-	experimental/logging/LogCategory.h \
-	experimental/logging/LogCategoryConfig.h \
-	experimental/logging/LogConfig.h \
-	experimental/logging/LogConfigParser.h \
-	experimental/logging/LogFormatter.h \
-	experimental/logging/Logger.h \
-	experimental/logging/LoggerDB.h \
-	experimental/logging/LogHandler.h \
-	experimental/logging/LogHandlerFactory.h \
-	experimental/logging/LogHandlerConfig.h \
-	experimental/logging/LogLevel.h \
-	experimental/logging/LogMessage.h \
-	experimental/logging/LogName.h \
-	experimental/logging/LogStream.h \
-	experimental/logging/LogStreamProcessor.h \
-	experimental/logging/LogWriter.h \
-	experimental/logging/printf.h \
-	experimental/logging/RateLimiter.h \
-	experimental/logging/StandardLogHandler.h \
-	experimental/logging/StandardLogHandlerFactory.h \
-	experimental/logging/StreamHandlerFactory.h \
-	experimental/logging/xlog.h \
 	experimental/NestedCommandLineApp.h \
 	experimental/observer/detail/Core.h \
 	experimental/observer/detail/GraphCycleDetector.h \
@@ -230,7 +221,6 @@ nobase_follyinclude_HEADERS = \
 	futures/SharedPromise.h \
 	futures/SharedPromise-inl.h \
 	futures/ThreadWheelTimekeeper.h \
-	futures/Timekeeper.h \
 	futures/detail/Core.h \
 	futures/detail/FSM.h \
 	futures/detail/Types.h \
@@ -254,6 +244,7 @@ nobase_follyinclude_HEADERS = \
 	gen/ParallelMap-inl.h \
 	gen/String.h \
 	gen/String-inl.h \
+	GLog.h \
 	GroupVarint.h \
 	Hash.h \
 	IPAddress.h \
@@ -276,6 +267,7 @@ nobase_follyinclude_HEADERS = \
 	io/async/AsyncPipe.h \
 	io/async/AsyncTimeout.h \
 	io/async/AsyncTransport.h \
+	io/async/AsyncTransportCertificate.h \
 	io/async/AsyncUDPServerSocket.h \
 	io/async/AsyncUDPSocket.h \
 	io/async/AsyncServerSocket.h \
@@ -328,14 +320,44 @@ nobase_follyinclude_HEADERS = \
 	lang/Assume.h \
 	lang/Bits.h \
 	lang/ColdClass.h \
+	lang/Exception.h \
 	lang/Launder.h \
+	lang/Ordering.h \
 	lang/RValueReferenceWrapper.h \
 	lang/SafeAssert.h \
+	lang/UncaughtExceptions.h \
 	Lazy.h \
 	Likely.h \
 	LockTraits.h \
 	LockTraitsBoost.h \
-	Logging.h \
+	logging/AsyncFileWriter.h \
+	logging/FileHandlerFactory.h \
+	logging/FileWriterFactory.h \
+	logging/GlogStyleFormatter.h \
+	logging/ImmediateFileWriter.h \
+	logging/Init.h \
+	logging/LogCategory.h \
+	logging/LogCategoryConfig.h \
+	logging/LogConfig.h \
+	logging/LogConfigParser.h \
+	logging/LogFormatter.h \
+	logging/Logger.h \
+	logging/LoggerDB.h \
+	logging/LogHandler.h \
+	logging/LogHandlerFactory.h \
+	logging/LogHandlerConfig.h \
+	logging/LogLevel.h \
+	logging/LogMessage.h \
+	logging/LogName.h \
+	logging/LogStream.h \
+	logging/LogStreamProcessor.h \
+	logging/LogWriter.h \
+	logging/printf.h \
+	logging/RateLimiter.h \
+	logging/StandardLogHandler.h \
+	logging/StandardLogHandlerFactory.h \
+	logging/StreamHandlerFactory.h \
+	logging/xlog.h \
 	MacAddress.h \
 	MapUtil.h \
 	Math.h \
@@ -363,7 +385,6 @@ nobase_follyinclude_HEADERS = \
 	Portability.h \
 	portability/Asm.h \
 	portability/Atomic.h \
-	portability/BitsFunctexcept.h \
 	portability/Builtins.h \
 	portability/Config.h \
 	portability/Constexpr.h \
@@ -425,12 +446,21 @@ nobase_follyinclude_HEADERS = \
 	ssl/detail/OpenSSLThreading.h \
 	ssl/detail/SSLSessionImpl.h \
 	stats/detail/Bucket.h \
+	stats/detail/BufferedStat-defs.h \
+	stats/detail/BufferedStat.h \
+	stats/detail/DigestBuilder-defs.h \
+	stats/detail/DigestBuilder.h \
+	stats/detail/SlidingWindow-defs.h \
+	stats/detail/SlidingWindow.h \
 	stats/BucketedTimeSeries-defs.h \
 	stats/BucketedTimeSeries.h \
 	stats/Histogram-defs.h \
 	stats/Histogram.h \
 	stats/MultiLevelTimeSeries-defs.h \
 	stats/MultiLevelTimeSeries.h \
+	stats/QuantileEstimator-defs.h \
+	stats/QuantileEstimator.h \
+	stats/TDigest.h \
 	stats/TimeseriesHistogram-defs.h \
 	stats/TimeseriesHistogram.h \
 	synchronization/AsymmetricMemoryBarrier.h \
@@ -438,6 +468,7 @@ nobase_follyinclude_HEADERS = \
 	synchronization/Baton.h \
 	synchronization/CallOnce.h \
 	synchronization/LifoSem.h \
+	synchronization/MicroSpinLock.h \
 	synchronization/ParkingLot.h \
 	synchronization/PicoSpinLock.h \
 	synchronization/RWSpinLock.h \
@@ -452,7 +483,6 @@ nobase_follyinclude_HEADERS = \
 	system/Shell.h \
 	system/ThreadId.h \
 	system/ThreadName.h \
-	system/VersionCheck.h \
 	stop_watch.h \
 	String.h \
 	String-inl.h \
@@ -460,7 +490,8 @@ nobase_follyinclude_HEADERS = \
 	Synchronized.h \
 	SynchronizedPtr.h \
 	test/FBStringTestBenchmarks.cpp.h \
-	test/FBVectorTestBenchmarks.cpp.h \
+	test/FBVectorBenchmarks.cpp.h \
+	test/FBVectorTests.cpp.h \
 	test/function_benchmark/benchmark_impl.h \
 	test/function_benchmark/test_functions.h \
 	test/SynchronizedTestLib.h \
@@ -476,8 +507,8 @@ nobase_follyinclude_HEADERS = \
 	Try-inl.h \
 	Try.h \
 	Unicode.h \
+	UTF8String.h \
 	Function.h \
-	UncaughtExceptions.h \
 	Unit.h \
 	Uri.h \
 	Uri-inl.h \
@@ -496,7 +527,6 @@ libfollybase_la_SOURCES = \
 	Format.cpp \
 	FormatArg.cpp \
 	memory/MallctlHelper.cpp \
-	portability/BitsFunctexcept.cpp \
 	String.cpp \
 	Unicode.cpp
 
@@ -506,6 +536,7 @@ libfolly_la_SOURCES = \
 	compression/Counters.cpp \
 	compression/Zlib.cpp \
 	concurrency/CacheLocality.cpp \
+	container/detail/F14Table.cpp \
 	detail/AtFork.cpp \
 	detail/Futex.cpp \
 	detail/IPAddress.cpp \
@@ -514,13 +545,11 @@ libfolly_la_SOURCES = \
 	dynamic.cpp \
 	ExceptionWrapper.cpp \
 	Executor.cpp \
-	Expected.cpp \
 	File.cpp \
 	FileUtil.cpp \
 	FingerprintTables.cpp \
 	futures/Barrier.cpp \
 	futures/Future.cpp \
-	futures/FutureException.cpp \
 	futures/ThreadWheelTimekeeper.cpp \
 	futures/test/TestExecutor.cpp \
 	executors/CPUThreadPoolExecutor.cpp \
@@ -608,7 +637,6 @@ libfolly_la_SOURCES = \
 	ScopeGuard.cpp \
 	SharedMutex.cpp \
 	MicroLock.cpp \
-	Optional.cpp \
 	Singleton.cpp \
 	SocketAddress.cpp \
 	ssl/Init.cpp \
@@ -619,6 +647,8 @@ libfolly_la_SOURCES = \
 	stats/BucketedTimeSeries.cpp \
 	stats/Histogram.cpp \
 	stats/MultiLevelTimeSeries.cpp \
+	stats/QuantileEstimator.cpp \
+	stats/TDigest.cpp \
 	stats/TimeseriesHistogram.cpp \
 	synchronization/AsymmetricMemoryBarrier.cpp \
 	synchronization/LifoSem.cpp \
@@ -627,10 +657,8 @@ libfolly_la_SOURCES = \
 	system/MemoryMapping.cpp \
 	system/Shell.cpp \
 	system/ThreadName.cpp \
-	system/VersionCheck.cpp \
 	Subprocess.cpp \
 	TimeoutQueue.cpp \
-	Try.cpp \
 	Uri.cpp \
 	experimental/ThreadedRepeatingFunctionRunner.cpp \
 	experimental/bser/Dump.cpp \

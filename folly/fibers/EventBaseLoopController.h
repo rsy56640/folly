@@ -59,7 +59,7 @@ class EventBaseLoopController : public LoopController {
 
   bool awaitingScheduling_{false};
   VirtualEventBase* eventBase_{nullptr};
-  Executor::KeepAlive eventBaseKeepAlive_;
+  Executor::KeepAlive<VirtualEventBase> eventBaseKeepAlive_;
   ControllerCallback callback_;
   FiberManager* fm_{nullptr};
   std::atomic<bool> eventBaseAttached_{false};
@@ -70,7 +70,7 @@ class EventBaseLoopController : public LoopController {
   void setFiberManager(FiberManager* fm) override;
   void schedule() override;
   void runLoop() override;
-  void scheduleThreadSafe(std::function<bool()> func) override;
+  void scheduleThreadSafe() override;
   void timedSchedule(std::function<void()> func, TimePoint time) override;
 
   friend class FiberManager;
@@ -78,4 +78,4 @@ class EventBaseLoopController : public LoopController {
 } // namespace fibers
 } // namespace folly
 
-#include "EventBaseLoopController-inl.h"
+#include <folly/fibers/EventBaseLoopController-inl.h>

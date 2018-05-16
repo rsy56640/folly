@@ -21,6 +21,8 @@
 #include <folly/Portability.h>
 #include <folly/Unit.h>
 #include <folly/Utility.h>
+#include <folly/functional/Invoke.h>
+#include <folly/lang/Exception.h>
 #include <exception>
 #include <stdexcept>
 #include <type_traits>
@@ -37,11 +39,6 @@ class FOLLY_EXPORT UsingUninitializedTry : public TryException {
  public:
   UsingUninitializedTry() : TryException("Using uninitialized try") {}
 };
-
-namespace try_detail {
-[[noreturn]] void throwTryDoesNotContainException();
-[[noreturn]] void throwUsingUninitializedTry();
-} // namespace try_detail
 
 /*
  * Try<T> is a wrapper that contains either an instance of T, an exception, or
@@ -111,7 +108,7 @@ class Try {
    *
    * @param ep The exception_pointer. Will be rethrown.
    */
-  FOLLY_DEPRECATED("use Try(exception_wrapper)")
+  [[deprecated("use Try(exception_wrapper)")]]
   explicit Try(std::exception_ptr ep)
       : contains_(Contains::EXCEPTION),
         e_(exception_wrapper::from_exception_ptr(ep)) {}
@@ -231,28 +228,28 @@ class Try {
 
   exception_wrapper& exception() & {
     if (!hasException()) {
-      try_detail::throwTryDoesNotContainException();
+      throw_exception<TryException>("Try does not contain an exception");
     }
     return e_;
   }
 
   exception_wrapper&& exception() && {
     if (!hasException()) {
-      try_detail::throwTryDoesNotContainException();
+      throw_exception<TryException>("Try does not contain an exception");
     }
     return std::move(e_);
   }
 
   const exception_wrapper& exception() const & {
     if (!hasException()) {
-      try_detail::throwTryDoesNotContainException();
+      throw_exception<TryException>("Try does not contain an exception");
     }
     return e_;
   }
 
   const exception_wrapper&& exception() const && {
     if (!hasException()) {
-      try_detail::throwTryDoesNotContainException();
+      throw_exception<TryException>("Try does not contain an exception");
     }
     return std::move(e_);
   }
@@ -373,7 +370,7 @@ class Try<void> {
    *
    * @param ep The exception_pointer. Will be rethrown.
    */
-  FOLLY_DEPRECATED("use Try(exception_wrapper)")
+  [[deprecated("use Try(exception_wrapper)")]]
   explicit Try(std::exception_ptr ep)
       : hasValue_(false), e_(exception_wrapper::from_exception_ptr(ep)) {}
 
@@ -414,28 +411,28 @@ class Try<void> {
    */
   exception_wrapper& exception() & {
     if (!hasException()) {
-      try_detail::throwTryDoesNotContainException();
+      throw_exception<TryException>("Try does not contain an exception");
     }
     return e_;
   }
 
   exception_wrapper&& exception() && {
     if (!hasException()) {
-      try_detail::throwTryDoesNotContainException();
+      throw_exception<TryException>("Try does not contain an exception");
     }
     return std::move(e_);
   }
 
   const exception_wrapper& exception() const & {
     if (!hasException()) {
-      try_detail::throwTryDoesNotContainException();
+      throw_exception<TryException>("Try does not contain an exception");
     }
     return e_;
   }
 
   const exception_wrapper&& exception() const && {
     if (!hasException()) {
-      try_detail::throwTryDoesNotContainException();
+      throw_exception<TryException>("Try does not contain an exception");
     }
     return std::move(e_);
   }
@@ -527,8 +524,8 @@ class Try<void> {
  */
 template <typename F>
 typename std::enable_if<
-  !std::is_same<typename std::result_of<F()>::type, void>::value,
-  Try<typename std::result_of<F()>::type>>::type
+    !std::is_same<invoke_result_t<F>, void>::value,
+    Try<invoke_result_t<F>>>::type
 makeTryWith(F&& f);
 
 /*
@@ -539,10 +536,9 @@ makeTryWith(F&& f);
  * @returns Try<void> holding the result of f
  */
 template <typename F>
-typename std::enable_if<
-  std::is_same<typename std::result_of<F()>::type, void>::value,
-  Try<void>>::type
-makeTryWith(F&& f);
+typename std::
+    enable_if<std::is_same<invoke_result_t<F>, void>::value, Try<void>>::type
+    makeTryWith(F&& f);
 
 /**
  * Tuple<Try<Type>...> -> std::tuple<Type...>

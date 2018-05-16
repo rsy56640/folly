@@ -7,7 +7,6 @@ include(CheckTypeSize)
 include(CheckCXXCompilerFlag)
 
 CHECK_INCLUDE_FILE_CXX(malloc.h FOLLY_HAVE_MALLOC_H)
-CHECK_INCLUDE_FILE_CXX(bits/functexcept.h FOLLY_HAVE_BITS_FUNCTEXCEPT_H)
 CHECK_INCLUDE_FILE_CXX(bits/c++config.h FOLLY_HAVE_BITS_CXXCONFIG_H)
 CHECK_INCLUDE_FILE_CXX(features.h FOLLY_HAVE_FEATURES_H)
 CHECK_INCLUDE_FILE_CXX(linux/membarrier.h FOLLY_HAVE_LINUX_MEMBARRIER_H)
@@ -32,16 +31,23 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "Windows")
     list(APPEND FOLLY_CXX_FLAGS -Wshadow-compatible-local)
   endif()
 
-  CHECK_CXX_COMPILER_FLAG(-Wno-noexcept-type COMPILER_HAS_W_NOEXCEPT_TYPE)
+  CHECK_CXX_COMPILER_FLAG(-Wnoexcept-type COMPILER_HAS_W_NOEXCEPT_TYPE)
   if (COMPILER_HAS_W_NOEXCEPT_TYPE)
     list(APPEND FOLLY_CXX_FLAGS -Wno-noexcept-type)
   endif()
 
   CHECK_CXX_COMPILER_FLAG(
-      -Wno-nullability-completeness
+      -Wnullability-completeness
       COMPILER_HAS_W_NULLABILITY_COMPLETENESS)
   if (COMPILER_HAS_W_NULLABILITY_COMPLETENESS)
     list(APPEND FOLLY_CXX_FLAGS -Wno-nullability-completeness)
+  endif()
+
+  CHECK_CXX_COMPILER_FLAG(
+      -Winconsistent-missing-override
+      COMPILER_HAS_W_INCONSISTENT_MISSING_OVERRIDE)
+  if (COMPILER_HAS_W_INCONSISTENT_MISSING_OVERRIDE)
+    list(APPEND FOLLY_CXX_FLAGS -Wno-inconsistent-missing-override)
   endif()
 
   CHECK_CXX_COMPILER_FLAG(-faligned-new COMPILER_HAS_F_ALIGNED_NEW)
@@ -124,11 +130,16 @@ check_type_size(__int128 INT128_SIZE LANGUAGE CXX)
 if (NOT INT128_SIZE STREQUAL "")
   set(FOLLY_HAVE_INT128_T ON)
   check_cxx_source_compiles("
+    #include <functional>
     #include <type_traits>
+    #include <utility>
     static_assert(
       ::std::is_same<::std::make_signed<unsigned __int128>::type,
                      __int128>::value,
       \"signed form of 'unsigned __uint128' must be '__int128'.\");
+    static_assert(
+        sizeof(::std::hash<__int128>{}(0)) > 0, \
+        \"std::hash<__int128> is disabled.\");
     int main() { return 0; }"
     HAVE_INT128_TRAITS
   )
@@ -162,7 +173,7 @@ check_cxx_source_compiles("
   #if !_LIBCPP_VERSION
   #error No libc++
   #endif
-  void func() {}"
+  int main() { return 0; }"
   FOLLY_USE_LIBCPP
 )
 
@@ -219,16 +230,3 @@ if (FOLLY_HAVE_LIBGFLAGS)
     set(FOLLY_GFLAGS_NAMESPACE google)
   endif()
 endif()
-
-set(FOLLY_USE_SYMBOLIZER OFF)
-CHECK_INCLUDE_FILE_CXX(elf.h FOLLY_HAVE_ELF_H)
-find_library(UNWIND_LIBRARIES NAMES unwind)
-if (UNWIND_LIBRARIES)
-  list(APPEND FOLLY_LINK_LIBRARIES ${UNWIND_LIBRARIES})
-  list(APPEND CMAKE_REQUIRED_LIBRARIES ${UNWIND_LIBRARIES})
-endif()
-check_function_exists(backtrace FOLLY_HAVE_BACKTRACE)
-if (FOLLY_HAVE_ELF_H AND FOLLY_HAVE_BACKTRACE AND LIBDWARF_FOUND)
-  set(FOLLY_USE_SYMBOLIZER ON)
-endif()
-message(STATUS "Setting FOLLY_USE_SYMBOLIZER: ${FOLLY_USE_SYMBOLIZER}")

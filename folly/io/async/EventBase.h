@@ -31,7 +31,6 @@
 #include <utility>
 
 #include <boost/intrusive/list.hpp>
-#include <boost/utility.hpp>
 #include <glog/logging.h>
 
 #include <folly/Executor.h>
@@ -39,6 +38,9 @@
 #include <folly/Portability.h>
 #include <folly/ScopeGuard.h>
 #include <folly/executors/DrivableExecutor.h>
+#include <folly/executors/IOExecutor.h>
+#include <folly/executors/ScheduledExecutor.h>
+#include <folly/executors/SequencedExecutor.h>
 #include <folly/experimental/ExecutionObserver.h>
 #include <folly/io/async/AsyncTimeout.h>
 #include <folly/io/async/HHWheelTimer.h>
@@ -126,7 +128,10 @@ class VirtualEventBase;
  */
 class EventBase : private boost::noncopyable,
                   public TimeoutManager,
-                  public DrivableExecutor {
+                  public DrivableExecutor,
+                  public IOExecutor,
+                  public SequencedExecutor,
+                  public ScheduledExecutor {
  public:
   using Func = folly::Function<void()>;
 
@@ -624,13 +629,8 @@ class EventBase : private boost::noncopyable,
     loopOnce();
   }
 
-  /// Returns you a handle which make loop() behave like loopForever() until
-  /// destroyed. loop() will return to its original behavior only when all
-  /// loop keep-alives are released.
-  KeepAlive getKeepAliveToken() override {
-    keepAliveAcquire();
-    return makeKeepAlive();
-  }
+  // Implements the ScheduledExecutor interface
+  void scheduleAt(Func&& fn, TimePoint const& timeout) override;
 
   // TimeoutManager
   void attachTimeoutManager(
@@ -657,13 +657,17 @@ class EventBase : private boost::noncopyable,
   // don't need to manage the life time of the VirtualEventBase used.
   folly::VirtualEventBase& getVirtualEventBase();
 
+  /// Implements the IOExecutor interface
+  EventBase* getEventBase() override;
+
  protected:
-  void keepAliveAcquire() override {
+  bool keepAliveAcquire() override {
     if (inRunningEventBaseThread()) {
       loopKeepAliveCount_++;
     } else {
       loopKeepAliveCountAtomic_.fetch_add(1, std::memory_order_relaxed);
     }
+    return true;
   }
 
   void keepAliveRelease() override {

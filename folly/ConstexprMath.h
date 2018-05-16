@@ -16,9 +16,49 @@
 
 #pragma once
 
+#include <cstdint>
+#include <limits>
 #include <type_traits>
 
 namespace folly {
+
+// TODO: Replace with std::equal_to, etc., after upgrading to C++14.
+template <typename T>
+struct constexpr_equal_to {
+  constexpr bool operator()(T const& a, T const& b) const {
+    return a == b;
+  }
+};
+template <typename T>
+struct constexpr_not_equal_to {
+  constexpr bool operator()(T const& a, T const& b) const {
+    return a != b;
+  }
+};
+template <typename T>
+struct constexpr_less {
+  constexpr bool operator()(T const& a, T const& b) const {
+    return a < b;
+  }
+};
+template <typename T>
+struct constexpr_less_equal {
+  constexpr bool operator()(T const& a, T const& b) const {
+    return a <= b;
+  }
+};
+template <typename T>
+struct constexpr_greater {
+  constexpr bool operator()(T const& a, T const& b) const {
+    return a > b;
+  }
+};
+template <typename T>
+struct constexpr_greater_equal {
+  constexpr bool operator()(T const& a, T const& b) const {
+    return a >= b;
+  }
+};
 
 // TLDR: Prefer using operator< for ordering. And when
 // a and b are equivalent objects, we return b to make
@@ -49,15 +89,9 @@ constexpr T const&
 constexpr_clamp(T const& v, T const& lo, T const& hi, Less less) {
   return less(v, lo) ? lo : less(hi, v) ? hi : v;
 }
-
 template <typename T>
 constexpr T const& constexpr_clamp(T const& v, T const& lo, T const& hi) {
-  struct Less {
-    constexpr bool operator()(T const& a, T const& b) const {
-      return a < b;
-    }
-  };
-  return constexpr_clamp(v, lo, hi, Less{});
+  return constexpr_clamp(v, lo, hi, constexpr_less<T>{});
 }
 
 namespace detail {
@@ -144,6 +178,211 @@ constexpr T constexpr_pow(T base, std::size_t exp) {
       : exp == 1 ? base
                  : detail::constexpr_square_(constexpr_pow(base, exp / 2)) *
               (exp % 2 ? base : T(1));
+}
+
+template <typename T>
+constexpr T constexpr_add_overflow_clamped(T a, T b) {
+  using L = std::numeric_limits<T>;
+  using M = std::intmax_t;
+  static_assert(
+      !std::is_integral<T>::value || sizeof(T) <= sizeof(M),
+      "Integral type too large!");
+  // clang-format off
+  return
+    // don't do anything special for non-integral types.
+    !std::is_integral<T>::value ? a + b :
+    // for narrow integral types, just convert to intmax_t.
+    sizeof(T) < sizeof(M)
+      ? T(constexpr_clamp(M(a) + M(b), M(L::min()), M(L::max()))) :
+    // when a >= 0, cannot add more than `MAX - a` onto a.
+    !(a < 0) ? a + constexpr_min(b, T(L::max() - a)) :
+    // a < 0 && b >= 0, `a + b` will always be in valid range of type T.
+    !(b < 0) ? a + b :
+    // a < 0 && b < 0, keep the result >= MIN.
+               a + constexpr_max(b, T(L::min() - a));
+  // clang-format on
+}
+
+template <typename T>
+constexpr T constexpr_sub_overflow_clamped(T a, T b) {
+  using L = std::numeric_limits<T>;
+  using M = std::intmax_t;
+  static_assert(
+      !std::is_integral<T>::value || sizeof(T) <= sizeof(M),
+      "Integral type too large!");
+  // clang-format off
+  return
+    // don't do anything special for non-integral types.
+    !std::is_integral<T>::value ? a - b :
+    // for unsigned type, keep result >= 0.
+    std::is_unsigned<T>::value ? (a < b ? 0 : a - b) :
+    // for narrow signed integral types, just convert to intmax_t.
+    sizeof(T) < sizeof(M)
+      ? T(constexpr_clamp(M(a) - M(b), M(L::min()), M(L::max()))) :
+    // (a >= 0 && b >= 0) || (a < 0 && b < 0), `a - b` will always be valid.
+    (a < 0) == (b < 0) ? a - b :
+    // MIN < b, so `-b` should be in valid range (-MAX <= -b <= MAX),
+    // convert subtraction to addition.
+    L::min() < b ? constexpr_add_overflow_clamped(a, T(-b)) :
+    // -b = -MIN = (MAX + 1) and a <= -1, result is in valid range.
+    a < 0 ? a - b :
+    // -b = -MIN = (MAX + 1) and a >= 0, result > MAX.
+            L::max();
+  // clang-format on
+}
+
+// clamp_cast<> provides sane numeric conversions from float point numbers to
+// integral numbers, and between different types of integral numbers. It helps
+// to avoid unexpected bugs introduced by bad conversion, and undefined behavior
+// like overflow when casting float point numbers to integral numbers.
+//
+// When doing clamp_cast<Dst>(value), if `value` is in valid range of Dst,
+// it will give correct result in Dst, equal to `value`.
+//
+// If `value` is outside the representable range of Dst, it will be clamped to
+// MAX or MIN in Dst, instead of being undefined behavior.
+//
+// Float NaNs are converted to 0 in integral type.
+//
+// Here's some comparision with static_cast<>:
+// (with FB-internal gcc-5-glibc-2.23 toolchain)
+//
+// static_cast<int32_t>(NaN) = 6
+// clamp_cast<int32_t>(NaN) = 0
+//
+// static_cast<int32_t>(9999999999.0f) = -348639895
+// clamp_cast<int32_t>(9999999999.0f) = 2147483647
+//
+// static_cast<int32_t>(2147483647.0f) = -348639895
+// clamp_cast<int32_t>(2147483647.0f) = 2147483647
+//
+// static_cast<uint32_t>(4294967295.0f) = 0
+// clamp_cast<uint32_t>(4294967295.0f) = 4294967295
+//
+// static_cast<uint32_t>(-1) = 4294967295
+// clamp_cast<uint32_t>(-1) = 0
+//
+// static_cast<int16_t>(32768u) = -32768
+// clamp_cast<int16_t>(32768u) = 32767
+
+template <typename Dst, typename Src>
+constexpr typename std::enable_if<std::is_integral<Src>::value, Dst>::type
+constexpr_clamp_cast(Src src) {
+  static_assert(
+      std::is_integral<Dst>::value && sizeof(Dst) <= sizeof(int64_t),
+      "constexpr_clamp_cast can only cast into integral type (up to 64bit)");
+
+  using L = std::numeric_limits<Dst>;
+  // clang-format off
+  return
+    // Check if Src and Dst have same signedness.
+    std::is_signed<Src>::value == std::is_signed<Dst>::value
+    ? (
+      // Src and Dst have same signedness. If sizeof(Src) <= sizeof(Dst),
+      // we can safely convert Src to Dst without any loss of accuracy.
+      sizeof(Src) <= sizeof(Dst) ? Dst(src) :
+      // If Src is larger in size, we need to clamp it to valid range in Dst.
+      Dst(constexpr_clamp(src, Src(L::min()), Src(L::max()))))
+    // Src and Dst have different signedness.
+    // Check if it's signed -> unsigend cast.
+    : std::is_signed<Src>::value && std::is_unsigned<Dst>::value
+    ? (
+      // If src < 0, the result should be 0.
+      src < 0 ? Dst(0) :
+      // Otherwise, src >= 0. If src can fit into Dst, we can safely cast it
+      // without loss of accuracy.
+      sizeof(Src) <= sizeof(Dst) ? Dst(src) :
+      // If Src is larger in size than Dst, we need to ensure the result is
+      // at most Dst MAX.
+      Dst(constexpr_min(src, Src(L::max()))))
+    // It's unsigned -> signed cast.
+    : (
+      // Since Src is unsigned, and Dst is signed, Src can fit into Dst only
+      // when sizeof(Src) < sizeof(Dst).
+      sizeof(Src) < sizeof(Dst) ? Dst(src) :
+      // If Src does not fit into Dst, we need to ensure the result is at most
+      // Dst MAX.
+      Dst(constexpr_min(src, Src(L::max()))));
+  // clang-format on
+}
+
+namespace detail {
+// Upper/lower bound values that could be accurately represented in both
+// integral and float point types.
+constexpr double kClampCastLowerBoundDoubleToInt64F = -9223372036854774784.0;
+constexpr double kClampCastUpperBoundDoubleToInt64F = 9223372036854774784.0;
+constexpr double kClampCastUpperBoundDoubleToUInt64F = 18446744073709549568.0;
+
+constexpr float kClampCastLowerBoundFloatToInt32F = -2147483520.0f;
+constexpr float kClampCastUpperBoundFloatToInt32F = 2147483520.0f;
+constexpr float kClampCastUpperBoundFloatToUInt32F = 4294967040.0f;
+
+// This works the same as constexpr_clamp, but the comparision are done in Src
+// to prevent any implicit promotions.
+template <typename D, typename S>
+constexpr D constexpr_clamp_cast_helper(S src, S sl, S su, D dl, D du) {
+  return src < sl ? dl : (src > su ? du : D(src));
+}
+} // namespace detail
+
+template <typename Dst, typename Src>
+constexpr typename std::enable_if<std::is_floating_point<Src>::value, Dst>::type
+constexpr_clamp_cast(Src src) {
+  static_assert(
+      std::is_integral<Dst>::value && sizeof(Dst) <= sizeof(int64_t),
+      "constexpr_clamp_cast can only cast into integral type (up to 64bit)");
+
+  using L = std::numeric_limits<Dst>;
+  // clang-format off
+  return
+    // Special case: cast NaN into 0.
+    // Using a trick here to portably check for NaN: f != f only if f is NaN.
+    // see: https://stackoverflow.com/a/570694
+    (src != src) ? Dst(0) :
+    // using `sizeof(Src) > sizeof(Dst)` as a heuristic that Dst can be
+    // represented in Src without loss of accuracy.
+    // see: https://en.wikipedia.org/wiki/Floating-point_arithmetic
+    sizeof(Src) > sizeof(Dst) ?
+      detail::constexpr_clamp_cast_helper(
+          src, Src(L::min()), Src(L::max()), L::min(), L::max()) :
+    // sizeof(Src) < sizeof(Dst) only happens when doing cast of
+    // 32bit float -> u/int64_t.
+    // Losslessly promote float into double, change into double -> u/int64_t.
+    sizeof(Src) < sizeof(Dst) ? (
+      src >= 0.0
+      ? constexpr_clamp_cast<Dst>(
+            constexpr_clamp_cast<std::uint64_t>(double(src)))
+      : constexpr_clamp_cast<Dst>(
+            constexpr_clamp_cast<std::int64_t>(double(src)))) :
+    // The following are for sizeof(Src) == sizeof(Dst).
+    std::is_same<Src, double>::value && std::is_same<Dst, int64_t>::value ?
+      detail::constexpr_clamp_cast_helper(
+          double(src),
+          detail::kClampCastLowerBoundDoubleToInt64F,
+          detail::kClampCastUpperBoundDoubleToInt64F,
+          L::min(),
+          L::max()) :
+    std::is_same<Src, double>::value && std::is_same<Dst, uint64_t>::value ?
+      detail::constexpr_clamp_cast_helper(
+          double(src),
+          0.0,
+          detail::kClampCastUpperBoundDoubleToUInt64F,
+          L::min(),
+          L::max()) :
+    std::is_same<Src, float>::value && std::is_same<Dst, int32_t>::value ?
+      detail::constexpr_clamp_cast_helper(
+          float(src),
+          detail::kClampCastLowerBoundFloatToInt32F,
+          detail::kClampCastUpperBoundFloatToInt32F,
+          L::min(),
+          L::max()) :
+      detail::constexpr_clamp_cast_helper(
+          float(src),
+          0.0f,
+          detail::kClampCastUpperBoundFloatToUInt32F,
+          L::min(),
+          L::max());
+  // clang-format on
 }
 
 } // namespace folly
